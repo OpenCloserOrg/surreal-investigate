@@ -16,10 +16,21 @@ Goal: make forensic-style investigation intuitive:
 
 This repo is in active build-out.
 
+### Implemented now
+
+- README baseline ✅
+- Node app scaffold ✅
+- `npm install` + `npm start` + UI on `http://localhost:3000` ✅
+- Cache creation API + local metadata persistence (`.app/caches.json`) ✅
+- Multi-file upload API (`/api/upload`) + per-cache storage in `uploads/<cache-id>/` ✅
+- File preview table in UI (name, size, extension, supported status) ✅
+- OpenRouter key/model local storage UI + simple status dot ✅
+- Smoke test (`npm test`) for health endpoint ✅
+
 ### Build sequence (incremental pushes)
 
 1. **README + architecture baseline** ✅
-2. App scaffold (Node server + UI + upload queue)
+2. **App scaffold (Node server + UI + upload queue)** ✅
 3. File extraction pipeline (type support + conversion to text)
 4. SurrealDB schema + indexing workers
 5. Query console (Surreal-only / Surreal+AI toggle)

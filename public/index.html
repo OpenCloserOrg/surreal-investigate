@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Surreal Investigate</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main>
+    <h1>Surreal Investigate</h1>
+    <p class="muted">Upload files, group into caches, and prepare indexing workflows.</p>
+
+    <section class="card">
+      <h2>OpenRouter</h2>
+      <div class="row">
+        <input id="or-key" placeholder="OpenRouter API key" type="password" />
+        <input id="or-model" placeholder="Model (e.g. google/gemini-2.0-flash-001)" />
+        <button id="save-or">Save</button>
+      </div>
+      <p>Status: <span id="or-dot" class="dot red"></span> <span id="or-status">Not checked</span></p>
+    </section>
+
+    <section class="card">
+      <h2>Caches</h2>
+      <div class="row">
+        <input id="cache-label" placeholder="New cache label" />
+        <button id="create-cache">Create Cache</button>
+      </div>
+      <ul id="cache-list"></ul>
+    </section>
+
+    <section class="card">
+      <h2>Upload</h2>
+      <div class="row">
+        <select id="cache-select"></select>
+        <input id="file-input" type="file" multiple />
+        <button id="upload-btn">Upload</button>
+      </div>
+      <table>
+        <thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Supported</th></tr></thead>
+        <tbody id="file-preview"></tbody>
+      </table>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
