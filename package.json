@@ -9,8 +9,12 @@
     "test": "node tests/smoke.test.js"
   },
   "dependencies": {
+    "adm-zip": "^0.5.17",
     "express": "^4.19.2",
+    "mammoth": "^1.12.0",
     "multer": "^1.4.5-lts.1",
-    "surrealdb": "^2.0.3"
+    "pdf-parse": "^2.4.5",
+    "surrealdb": "^2.0.3",
+    "xlsx": "^0.18.5"
   }
 }

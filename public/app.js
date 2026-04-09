@@ -1,4 +1,4 @@
-const supported = ['txt','md','csv','json','eml'];
+const supported = ['txt','md','csv','json','eml','sql','pdf','docx','xlsx','xls','doc','epub'];
 const $ = (id) => document.getElementById(id);
 
 function ext(name=''){ const p=name.split('.'); return p.length>1 ? p.pop().toLowerCase() : ''; }
@@ -35,7 +35,7 @@ $('create-cache').onclick=async()=>{
 
 $('file-input').onchange=()=>{
   const files=[...$('file-input').files];
-  $('file-preview').innerHTML=files.map(f=>{ const e=ext(f.name); const ok=supported.includes(e); return `<tr><td>${f.name}</td><td>${e||'unknown'}</td><td>${bytes(f.size)}</td><td>${ok?'✅':'❌'}</td></tr>`; }).join('');
+  $('file-preview').innerHTML=files.map(f=>{ const e=ext(f.name); const ok=supported.includes(e); const supportLabel = ok ? '✅' : '⚠️ raw-fallback'; return `<tr><td>${f.name}</td><td>${e||'unknown'}</td><td>${bytes(f.size)}</td><td>${supportLabel}</td></tr>`; }).join('');
 };
 
 $('upload-btn').onclick=async()=>{

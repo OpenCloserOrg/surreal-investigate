@@ -16,7 +16,8 @@ When fully running, you can:
 - `npm install` + `npm start` on `http://localhost:3000`
 - Cache CRUD (create/list)
 - File upload queue and support preview
-- Supported extraction now: `.txt .md .csv .json .eml`
+- Supported extraction now: `.txt .md .csv .json .eml .sql .pdf .docx .xlsx .xls .doc .epub`
+- Unknown extensions: best-effort raw text fallback extraction
 - Surreal indexing endpoint
 - Index logs + readiness state
 - Query endpoint with two modes:

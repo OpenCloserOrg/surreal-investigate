@@ -138,7 +138,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
       let chunkCount = 0;
 
       for (const file of files) {
-        const extracted = extractTextFromFile(file.absPath, file.originalName);
+        const extracted = await extractTextFromFile(file.absPath, file.originalName);
         if (!extracted.supported) {
           log(`Skipped unsupported file: ${file.originalName}`);
           continue;
