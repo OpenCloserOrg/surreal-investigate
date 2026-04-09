@@ -1,4 +1,4 @@
-const supported = ['txt','md','csv','json','eml','sql','pdf','docx','xlsx','xls','doc','epub'];
+const supported = ['txt','md','csv','tsv','json','eml','sql','pdf','docx','xlsx','xls','doc','epub'];
 const $ = (id) => document.getElementById(id);
 let activeChatId = '';
 let initializedNewChatForCache = new Set();

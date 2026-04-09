@@ -114,7 +114,13 @@ app.get('/api/index-progress/:cacheId', (req, res) => {
   const elapsedSec = Math.max(1, Math.floor((Date.now() - job.startedAtMs) / 1000));
   const bytesPerSec = Math.max(1, Math.floor(job.processedBytes / elapsedSec));
   const remainingBytes = Math.max(0, job.totalBytes - job.processedBytes);
-  const etaSec = Math.ceil(remainingBytes / bytesPerSec);
+  let etaSec = Math.ceil(remainingBytes / bytesPerSec);
+  if (job.totalFiles > 0 && job.processedFiles > 0) {
+    const avgPerFile = elapsedSec / job.processedFiles;
+    const etaByFiles = Math.ceil((job.totalFiles - job.processedFiles) * avgPerFile);
+    etaSec = Math.min(etaSec, etaByFiles);
+  }
+  etaSec = Math.min(etaSec, 60 * 60); // clamp to avoid absurd ETAs on tiny datasets
   const pct = job.totalBytes > 0 ? Math.min(100, Math.round((job.processedBytes / job.totalBytes) * 100)) : 0;
   return res.json({
     ok: true,
@@ -351,23 +357,28 @@ app.post('/api/index/:cacheId', async (req, res) => {
       return { documentCount, chunkCount, entityCount, eventCount, activityCount, intentCount, relationCount, anomalyCount };
     }), INDEX_JOB_TIMEOUT_MS, 'index job');
 
-    const summaryRows = await withTimeout(withSurreal(async (db) => {
-      const [ent, ev, an] = await Promise.all([
-        db.query('SELECT value FROM entity WHERE cacheId = $cacheId LIMIT 5;', { cacheId }),
-        db.query('SELECT rawAmount, currency FROM event WHERE cacheId = $cacheId LIMIT 5;', { cacheId }),
-        db.query('SELECT type FROM anomaly WHERE cacheId = $cacheId LIMIT 5;', { cacheId })
-      ]);
-      const rowsToList = (rows) => (Array.isArray(rows?.[0]) ? rows[0] : (rows?.[0]?.result || []));
-      return { entities: rowsToList(ent), events: rowsToList(ev), anomalies: rowsToList(an) };
-    }), 8000, 'post-index-summary');
+    let quickSummary = `Indexed ${result.documentCount} document(s) into ${result.chunkCount} chunk(s).`;
+    try {
+      const summaryRows = await withTimeout(withSurreal(async (db) => {
+        const [ent, ev, an] = await Promise.all([
+          db.query('SELECT * FROM entity WHERE cacheId = $cacheId LIMIT 5;', { cacheId }),
+          db.query('SELECT * FROM event WHERE cacheId = $cacheId LIMIT 5;', { cacheId }),
+          db.query('SELECT * FROM anomaly WHERE cacheId = $cacheId LIMIT 5;', { cacheId })
+        ]);
+        const rowsToList = (rows) => (Array.isArray(rows?.[0]) ? rows[0] : (rows?.[0]?.result || []));
+        return { entities: rowsToList(ent), events: rowsToList(ev), anomalies: rowsToList(an) };
+      }), 8000, 'post-index-summary');
 
-    const quickSummary = [
-      `Indexed ${result.documentCount} document(s) into ${result.chunkCount} chunk(s).`,
-      summaryRows.entities.length ? `Top entities: ${summaryRows.entities.map((e) => e.value).filter(Boolean).slice(0, 3).join(', ')}.` : 'No strong named entities extracted yet.',
-      (summaryRows.events.length || summaryRows.anomalies.length)
-        ? `Signals: ${summaryRows.events.length} event(s), ${summaryRows.anomalies.length} anomaly flag(s).`
-        : 'No event/anomaly signals extracted yet.'
-    ].join(' ');
+      quickSummary = [
+        `Indexed ${result.documentCount} document(s) into ${result.chunkCount} chunk(s).`,
+        summaryRows.entities.length ? `Top entities: ${summaryRows.entities.map((e) => e.value || e.normalized).filter(Boolean).slice(0, 3).join(', ')}.` : 'No strong named entities extracted yet.',
+        (summaryRows.events.length || summaryRows.anomalies.length)
+          ? `Signals: ${summaryRows.events.length} event(s), ${summaryRows.anomalies.length} anomaly flag(s).`
+          : 'No event/anomaly signals extracted yet.'
+      ].join(' ');
+    } catch (summaryErr) {
+      log(`Summary generation skipped: ${summaryErr.message}`);
+    }
 
     const manifest = {
       cacheId,
