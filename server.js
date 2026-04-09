@@ -126,6 +126,7 @@ app.get('/api/index-progress/:cacheId', (req, res) => {
     ok: true,
     active: job.status === 'running',
     status: job.status,
+    stage: job.stage || '',
     cacheId,
     totalFiles: job.totalFiles,
     processedFiles: job.processedFiles,
@@ -240,15 +241,18 @@ app.post('/api/index/:cacheId', async (req, res) => {
       processedFiles: 0,
       totalBytes: preFiles.reduce((s, f) => s + (Number(f.size) || 0), 0),
       processedBytes: 0,
-      currentFile: ''
+      currentFile: '',
+      stage: 'initializing'
     });
 
     logServer('index:start', { cacheId, indexStrategy, indexStrategyNotes: indexStrategyNotes.slice(0, 180) });
+    const startJob = indexJobs.get(cacheId); if (startJob) { startJob.stage = 'connecting_to_surreal'; indexJobs.set(cacheId, startJob); }
     log(`Index strategy: ${indexStrategy}${indexStrategyNotes ? ` (${indexStrategyNotes.slice(0, 120)})` : ''}`);
     log('Connecting to SurrealDB...');
     await withTimeout(withSurreal(async (db) => db.query('RETURN 1;')), 5000, 'surreal precheck');
     const result = await withTimeout(withSurreal(async (db) => {
       await ensureSchema(db);
+      const schemaJob = indexJobs.get(cacheId); if (schemaJob) { schemaJob.stage = 'ensuring_schema'; indexJobs.set(cacheId, schemaJob); }
       log('Schema ensured.');
       await db.query(
         'DELETE document WHERE cacheId = $cacheId; DELETE chunk WHERE cacheId = $cacheId; DELETE entity WHERE cacheId = $cacheId; DELETE event WHERE cacheId = $cacheId; DELETE activity WHERE cacheId = $cacheId; DELETE intent WHERE cacheId = $cacheId; DELETE relation WHERE cacheId = $cacheId; DELETE anomaly WHERE cacheId = $cacheId;',
@@ -269,11 +273,15 @@ app.post('/api/index/:cacheId', async (req, res) => {
       let anomalyCount = 0;
 
       for (const file of files) {
+        let fileStartProcessedBytes = 0;
         const job = indexJobs.get(cacheId);
         if (job) {
           job.currentFile = file.originalName;
+          job.stage = 'extracting_file';
+          fileStartProcessedBytes = job.processedBytes || 0;
           indexJobs.set(cacheId, job);
         }
+        log(`Starting extraction: ${file.originalName} (${Math.round((Number(file.size)||0)/1024)} KB)`);
         const extracted = await extractTextFromFile(file.absPath, file.originalName);
         if (!extracted.supported) {
           log(`Skipped unsupported file: ${file.originalName}`);
@@ -300,6 +308,8 @@ app.post('/api/index/:cacheId', async (req, res) => {
         );
         documentCount += 1;
         const chunks = chunkText(extracted.text, 1400);
+        const chunkJob = indexJobs.get(cacheId); if (chunkJob) { chunkJob.stage = 'indexing_chunks'; indexJobs.set(cacheId, chunkJob); }
+        log(`Chunking ${file.originalName}: ${chunks.length} chunks`);
         let i = 0;
         for (const text of chunks) {
           i += 1;
@@ -317,6 +327,18 @@ app.post('/api/index/:cacheId', async (req, res) => {
             }
           );
           chunkCount += 1;
+
+          // Incremental progress for large single-file jobs.
+          const liveJob = indexJobs.get(cacheId);
+          if (liveJob && chunks.length > 0) {
+            const perChunkBytes = (Number(file.size) || 0) / chunks.length;
+            const baseProcessed = liveJob.processedBytes;
+            const target = Math.min(liveJob.totalBytes, Math.floor(fileStartProcessedBytes + (i * perChunkBytes)));
+            if (target > baseProcessed) {
+              liveJob.processedBytes = target;
+              indexJobs.set(cacheId, liveJob);
+            }
+          }
 
           const analysis = analyzeChunk(text);
           for (const entity of analysis.entities) {
@@ -358,6 +380,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
     }), INDEX_JOB_TIMEOUT_MS, 'index job');
 
     let quickSummary = `Indexed ${result.documentCount} document(s) into ${result.chunkCount} chunk(s).`;
+    const sumJob = indexJobs.get(cacheId); if (sumJob) { sumJob.stage = 'building_summary'; indexJobs.set(cacheId, sumJob); }
     try {
       const summaryRows = await withTimeout(withSurreal(async (db) => {
         const [ent, ev, an] = await Promise.all([
@@ -407,6 +430,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
     const doneJob = indexJobs.get(cacheId);
     if (doneJob) {
       doneJob.status = 'done';
+      doneJob.stage = 'done';
       doneJob.currentFile = '';
       doneJob.processedFiles = doneJob.totalFiles;
       doneJob.processedBytes = doneJob.totalBytes;
@@ -423,6 +447,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
     const failedJob = indexJobs.get(cacheId);
     if (failedJob) {
       failedJob.status = 'error';
+      failedJob.stage = 'error';
       indexJobs.set(cacheId, failedJob);
     }
     logServer('index:error', { cacheId, error: error.message });

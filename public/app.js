@@ -142,7 +142,7 @@ $('index-btn').onclick=async()=>{
         const mbDone = (Number(pj.processedBytes || 0) / (1024*1024)).toFixed(2);
         const mbTotal = (Number(pj.totalBytes || 0) / (1024*1024)).toFixed(2);
         setProgress(Number.isFinite(pj.pct) ? pj.pct : 0);
-        $('index-estimate').textContent = `Progress: ${pj.pct || 0}% • files ${pj.processedFiles||0}/${pj.totalFiles||0} • ${mbDone}/${mbTotal} MB • ETA ~${pj.etaSec||0}s${pj.currentFile?` • current: ${pj.currentFile}`:''}`;
+        $('index-estimate').textContent = `Stage: ${pj.stage || 'running'} • Progress: ${pj.pct || 0}% • files ${pj.processedFiles||0}/${pj.totalFiles||0} • ${mbDone}/${mbTotal} MB • ETA ~${pj.etaSec||0}s${pj.currentFile?` • current: ${pj.currentFile}`:''}`;
       }
     } catch {}
   };
@@ -156,7 +156,7 @@ $('index-btn').onclick=async()=>{
 
   if(!r.ok){ setProgress(0); $('index-estimate').textContent = 'Index failed.'; $('index-log').textContent=(j.logs||[]).map(x=>`- ${x.message}`).join('\n') + `\nERROR: ${j.error}`; await fetchCaches(); return; }
   setProgress(100);
-  $('index-estimate').textContent = 'Index complete.';
+  $('index-estimate').textContent = j.reusedExisting ? 'Loaded existing index (no re-scan).' : 'Index complete.';
   $('index-log').textContent=(j.manifest.logs||[]).map(x=>`- ${x.message}`).join('\n') + `${j.manifest.summary ? `\n\nSummary:\n${j.manifest.summary}` : ''}` + `\n\nHow indexing works:\n${(j.manifest.indexingExplanation||[]).map(s=>`- ${s}`).join('\n')}\n\nDONE: docs=${j.manifest.stats.documentCount} chunks=${j.manifest.stats.chunkCount} entities=${j.manifest.stats.entityCount||0} events=${j.manifest.stats.eventCount||0} activities=${j.manifest.stats.activityCount||0} intents=${j.manifest.stats.intentCount||0}${j.reusedExisting ? '\n(Loaded existing index; no re-scan performed.)' : ''}`;
   await fetchCaches();
 };
