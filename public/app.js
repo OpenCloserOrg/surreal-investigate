@@ -189,12 +189,35 @@ $('ask-btn').onclick=async()=>{
   $('trace').textContent='Step 1: Parse query\nStep 2: Query Surreal chunks + structured tables\nStep 3: Build response';
 
   const payload = { question:q, mode, chatId: activeChatId, queryStrategy: $('query-strategy').value, queryStrategyNotes: $('query-strategy-notes').value.trim(), openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() };
-  const r=await fetch(`/api/query/${cacheId}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  const j=await r.json();
-  if(!r.ok){ $('query-status').textContent='Query failed'; $('trace').textContent += `\nERROR: ${j.error||'query failed'}`; return; }
+  $('trace').textContent = 'Step 1: Parse query\nStep 2: Query Surreal chunks + structured tables\nStep 3: If AI mode, call OpenRouter and await response';
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 70000);
+  let r, j;
+  try {
+    r=await fetch(`/api/query/${cacheId}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal: ctrl.signal});
+    j=await r.json();
+  } catch (e) {
+    clearTimeout(t);
+    $('query-status').textContent='Query failed';
+    $('trace').textContent += `\nERROR: ${e.name === 'AbortError' ? 'Request timed out waiting for response' : e.message}`;
+    return;
+  }
+  clearTimeout(t);
+  if(!r.ok){ $('query-status').textContent='Query failed'; $('trace').textContent = (j.trace||[]).map((x)=>`- ${x.step}${x.model?` model=${x.model}`:''}${x.payloadBytes?` bytes=${x.payloadBytes}`:''}${x.error?` error=${x.error}`:''}`).join('\n') + `\nERROR: ${j.error||'query failed'}`; return; }
   if (j.chatId) activeChatId = j.chatId;
   const struct = j.structured || {};
-  $('trace').textContent = `Surreal returned:\n- chunks: ${(j.evidence||[]).length}\n- entities: ${struct.entities?.length||0}\n- events: ${struct.events?.length||0}\n- activities: ${struct.activities?.length||0}\n- intents: ${struct.intents?.length||0}\n- anomalies: ${struct.anomalies?.length||0}\n- relations: ${struct.relations?.length||0}\n${mode==='ai'?'AI synthesized final answer using these findings.':'Surreal-only response returned.'}`;
+  const traceLines = (j.trace || []).map((x) => {
+    const bits = [x.step];
+    if (x.model) bits.push(`model=${x.model}`);
+    if (x.payloadBytes) bits.push(`payload=${x.payloadBytes}B`);
+    if (typeof x.chunks === 'number') bits.push(`chunks=${x.chunks}`);
+    if (typeof x.entities === 'number') bits.push(`entities=${x.entities}`);
+    if (typeof x.activities === 'number') bits.push(`activities=${x.activities}`);
+    if (typeof x.intents === 'number') bits.push(`intents=${x.intents}`);
+    if (x.error) bits.push(`error=${x.error}`);
+    return `- ${bits.join(' | ')}`;
+  });
+  $('trace').textContent = `${traceLines.join('\n')}\n\nSurreal returned:\n- chunks: ${(j.evidence||[]).length}\n- entities: ${struct.entities?.length||0}\n- events: ${struct.events?.length||0}\n- activities: ${struct.activities?.length||0}\n- intents: ${struct.intents?.length||0}\n- anomalies: ${struct.anomalies?.length||0}\n- relations: ${struct.relations?.length||0}\n${mode==='ai'?'AI synthesized final answer using these findings.':'Surreal-only response returned.'}`;
   $('query-status').textContent=`Done. mode=${j.mode}`;
   await fetchChats();
   await loadChatMessages();

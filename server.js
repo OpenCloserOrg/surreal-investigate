@@ -464,9 +464,14 @@ app.post('/api/query/:cacheId', async (req, res) => {
   const chatId = String(req.body?.chatId || '').trim() || `chat-${Date.now()}`;
   if (!question) return res.status(400).json({ ok: false, error: 'question required' });
 
+  const trace = [];
+  const pushTrace = (step, detail = {}) => trace.push({ at: new Date().toISOString(), step, ...detail });
+
   try {
     logServer('query:start', { cacheId, mode, chatId, queryStrategy });
+    pushTrace('parse_query', { mode, queryStrategy, questionLength: question.length });
     await withTimeout(withSurreal(async (db) => db.query('RETURN 1;')), 5000, 'surreal precheck');
+    pushTrace('surreal_precheck_ok');
     const retrieval = await withTimeout(withSurreal(async (db) => {
       const [chunkRows, entityRows, eventRows, activityRows, intentRows, anomalyRows, relationRows] = await Promise.all([
         db.query(`SELECT fileId, filename, chunkIndex, text FROM chunk WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
@@ -519,6 +524,15 @@ app.post('/api/query/:cacheId', async (req, res) => {
     }), 20000, 'query');
 
     const chunks = retrieval.chunks;
+    pushTrace('surreal_retrieval_done', {
+      chunks: retrieval.chunks.length,
+      entities: retrieval.entities.length,
+      events: retrieval.events.length,
+      activities: retrieval.activities.length,
+      intents: retrieval.intents.length,
+      anomalies: retrieval.anomalies.length,
+      relations: retrieval.relations.length
+    });
 
     if (mode === 'surreal') {
       const summary = [
@@ -542,6 +556,7 @@ app.post('/api/query/:cacheId', async (req, res) => {
         chatId,
         answer,
         evidence: chunks,
+        trace,
         structured: {
           entities: retrieval.entities,
           events: retrieval.events,
@@ -557,6 +572,7 @@ app.post('/api/query/:cacheId', async (req, res) => {
     const model = String(req.body?.model || '').trim() || 'openai/gpt-4o-mini';
     if (!apiKey) return res.status(400).json({ ok: false, error: 'OpenRouter key required for ai mode.' });
 
+    pushTrace('build_ai_prompt');
     const prior = readChatLog(cacheId, chatId).messages || [];
     const priorTurns = prior.slice(-8).map((m) => `${m.role?.toUpperCase?.() || 'MSG'}: ${String(m.content || '').slice(0, 220)}`).join('\n');
     const prompt = `You are an investigation assistant. Answer using only supplied evidence snippets and structured findings.
@@ -582,12 +598,22 @@ Return:
 2) key links/patterns
 3) possible vulnerabilities or mismatches
 4) confidence (low/medium/high) with why.`;
+    const aiRequestBody = JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.1 });
+    pushTrace('openrouter_request_start', { model, payloadBytes: aiRequestBody.length });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000);
     const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.1 })
-    });
+      body: aiRequestBody,
+      signal: controller.signal
+    }).finally(() => clearTimeout(timer));
     const j = await r.json();
+    if (!r.ok) {
+      pushTrace('openrouter_error', { status: r.status, error: j?.error?.message || 'unknown' });
+      return res.status(502).json({ ok: false, error: `OpenRouter error: ${j?.error?.message || r.status}`, trace });
+    }
+    pushTrace('openrouter_response_ok', { status: r.status, hasChoices: Array.isArray(j?.choices) });
     const answer = j?.choices?.[0]?.message?.content || 'No AI answer returned.';
 
     appendChatLog(cacheId, chatId, { role: 'user', mode, queryStrategy, content: question });
@@ -600,6 +626,7 @@ Return:
       chatId,
       answer,
       evidence: chunks,
+      trace,
       structured: {
         entities: retrieval.entities,
         events: retrieval.events,
@@ -611,7 +638,8 @@ Return:
     });
   } catch (error) {
     logServer('query:error', { cacheId, mode, chatId, error: error.message });
-    return res.status(500).json({ ok: false, error: error.message || 'query failed' });
+    pushTrace('query_error', { error: error.message || 'query failed' });
+    return res.status(500).json({ ok: false, error: error.message || 'query failed', trace });
   }
 });
 
