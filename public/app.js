@@ -90,11 +90,36 @@ $('index-btn').onclick=async()=>{
   const cacheRes = await fetch('/api/caches'); const cacheJson = await cacheRes.json(); const active = (cacheJson.caches || []).find((c) => c.id === cacheId);
   if (!active || !(active.files || []).length) { $('index-log').textContent = 'Cannot index: this cache has 0 uploaded files.'; setProgress(0); return; }
   const ok = await checkSurreal(); if(!ok){ $('index-log').textContent='Cannot index: SurrealDB is unreachable.'; return; }
-  setProgress(5); $('index-log').textContent='Indexing started...'; let p = 8; const ticker = setInterval(()=>{ p=Math.min(92,p+4); setProgress(p); }, 700);
+
+  setProgress(2);
+  $('index-estimate').textContent = 'Estimating indexing time...';
+  $('index-log').textContent='Indexing started...';
+
+  let stopped = false;
+  const pollProgress = async () => {
+    if (stopped) return;
+    try {
+      const pr = await fetch(`/api/index-progress/${cacheId}`);
+      const pj = await pr.json();
+      if (pj?.ok && (pj.active || pj.status === 'done')) {
+        const mbDone = (Number(pj.processedBytes || 0) / (1024*1024)).toFixed(2);
+        const mbTotal = (Number(pj.totalBytes || 0) / (1024*1024)).toFixed(2);
+        setProgress(Number.isFinite(pj.pct) ? pj.pct : 0);
+        $('index-estimate').textContent = `Progress: ${pj.pct || 0}% • files ${pj.processedFiles||0}/${pj.totalFiles||0} • ${mbDone}/${mbTotal} MB • ETA ~${pj.etaSec||0}s${pj.currentFile?` • current: ${pj.currentFile}`:''}`;
+      }
+    } catch {}
+  };
+  await pollProgress();
+  const ticker = setInterval(pollProgress, 1200);
+
   const r=await fetch(`/api/index/${cacheId}`,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ indexStrategy: $('index-strategy').value, indexStrategyNotes: $('index-strategy-notes').value.trim() }) });
-  const j=await r.json(); clearInterval(ticker);
-  if(!r.ok){ setProgress(0); $('index-log').textContent=(j.logs||[]).map(x=>`- ${x.message}`).join('\n') + `\nERROR: ${j.error}`; await fetchCaches(); return; }
+  const j=await r.json();
+  stopped = true;
+  clearInterval(ticker);
+
+  if(!r.ok){ setProgress(0); $('index-estimate').textContent = 'Index failed.'; $('index-log').textContent=(j.logs||[]).map(x=>`- ${x.message}`).join('\n') + `\nERROR: ${j.error}`; await fetchCaches(); return; }
   setProgress(100);
+  $('index-estimate').textContent = 'Index complete.';
   $('index-log').textContent=(j.manifest.logs||[]).map(x=>`- ${x.message}`).join('\n') + `\n\nHow indexing works:\n${(j.manifest.indexingExplanation||[]).map(s=>`- ${s}`).join('\n')}\n\nDONE: docs=${j.manifest.stats.documentCount} chunks=${j.manifest.stats.chunkCount} entities=${j.manifest.stats.entityCount||0} events=${j.manifest.stats.eventCount||0} activities=${j.manifest.stats.activityCount||0} intents=${j.manifest.stats.intentCount||0}`;
   await fetchCaches();
 };

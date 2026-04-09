@@ -15,6 +15,7 @@ const INDEXES_DIR = path.join(ROOT, 'indexes');
 const DATA_DIR = path.join(ROOT, 'data');
 const CHAT_LOGS_DIR = path.join(ROOT, 'chat-logs');
 const CACHES_JSON = path.join(APP_DIR, 'caches.json');
+const indexJobs = new Map();
 
 for (const p of [APP_DIR, UPLOADS_DIR, INDEXES_DIR, DATA_DIR, CHAT_LOGS_DIR]) fs.mkdirSync(p, { recursive: true });
 if (!fs.existsSync(CACHES_JSON)) fs.writeFileSync(CACHES_JSON, JSON.stringify({ caches: [] }, null, 2));
@@ -105,6 +106,31 @@ app.get('/api/surreal/health', async (_req, res) => {
 app.get('/api/config', (_req, res) => res.json({ ok: true, surreal: surrealConfig }));
 
 app.get('/api/caches', (_req, res) => res.json({ ok: true, caches: readCaches().caches || [] }));
+app.get('/api/index-progress/:cacheId', (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const job = indexJobs.get(cacheId);
+  if (!job) return res.json({ ok: true, active: false });
+  const elapsedSec = Math.max(1, Math.floor((Date.now() - job.startedAtMs) / 1000));
+  const bytesPerSec = Math.max(1, Math.floor(job.processedBytes / elapsedSec));
+  const remainingBytes = Math.max(0, job.totalBytes - job.processedBytes);
+  const etaSec = Math.ceil(remainingBytes / bytesPerSec);
+  const pct = job.totalBytes > 0 ? Math.min(100, Math.round((job.processedBytes / job.totalBytes) * 100)) : 0;
+  return res.json({
+    ok: true,
+    active: job.status === 'running',
+    status: job.status,
+    cacheId,
+    totalFiles: job.totalFiles,
+    processedFiles: job.processedFiles,
+    totalBytes: job.totalBytes,
+    processedBytes: job.processedBytes,
+    currentFile: job.currentFile || '',
+    elapsedSec,
+    bytesPerSec,
+    etaSec,
+    pct
+  });
+});
 app.get('/api/chats/:cacheId', (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
   return res.json({ ok: true, chats: listChats(cacheId) });
@@ -183,6 +209,17 @@ app.post('/api/index/:cacheId', async (req, res) => {
   const log = (m) => logs.push({ at: new Date().toISOString(), message: m });
 
   try {
+    const preFiles = (cache.files || []).filter((f) => f.absPath && fs.existsSync(f.absPath));
+    indexJobs.set(cacheId, {
+      status: 'running',
+      startedAtMs: Date.now(),
+      totalFiles: preFiles.length,
+      processedFiles: 0,
+      totalBytes: preFiles.reduce((s, f) => s + (Number(f.size) || 0), 0),
+      processedBytes: 0,
+      currentFile: ''
+    });
+
     logServer('index:start', { cacheId, indexStrategy, indexStrategyNotes: indexStrategyNotes.slice(0, 180) });
     log(`Index strategy: ${indexStrategy}${indexStrategyNotes ? ` (${indexStrategyNotes.slice(0, 120)})` : ''}`);
     log('Connecting to SurrealDB...');
@@ -209,6 +246,11 @@ app.post('/api/index/:cacheId', async (req, res) => {
       let anomalyCount = 0;
 
       for (const file of files) {
+        const job = indexJobs.get(cacheId);
+        if (job) {
+          job.currentFile = file.originalName;
+          indexJobs.set(cacheId, job);
+        }
         const extracted = await extractTextFromFile(file.absPath, file.originalName);
         if (!extracted.supported) {
           log(`Skipped unsupported file: ${file.originalName}`);
@@ -281,6 +323,12 @@ app.post('/api/index/:cacheId', async (req, res) => {
           }
         }
         log(`Indexed ${file.originalName}: ${summary.wordCount} words, ${chunks.length} chunks, entities=${entityCount}, events=${eventCount}, activities=${activityCount}, intents=${intentCount}, anomalies=${anomalyCount} (method: ${extracted.method || 'unknown'}).`);
+        const job2 = indexJobs.get(cacheId);
+        if (job2) {
+          job2.processedFiles += 1;
+          job2.processedBytes += Number(file.size) || 0;
+          indexJobs.set(cacheId, job2);
+        }
       }
 
       return { documentCount, chunkCount, entityCount, eventCount, activityCount, intentCount, relationCount, anomalyCount };
@@ -308,6 +356,14 @@ app.post('/api/index/:cacheId', async (req, res) => {
     cache.updatedAt = new Date().toISOString();
     cache.indexStats = result;
     writeCaches(data);
+    const doneJob = indexJobs.get(cacheId);
+    if (doneJob) {
+      doneJob.status = 'done';
+      doneJob.currentFile = '';
+      doneJob.processedFiles = doneJob.totalFiles;
+      doneJob.processedBytes = doneJob.totalBytes;
+      indexJobs.set(cacheId, doneJob);
+    }
     logServer('index:done', { cacheId, ...result });
 
     return res.json({ ok: true, cache, manifest });
@@ -316,6 +372,11 @@ app.post('/api/index/:cacheId', async (req, res) => {
     cache.readyForQuestions = false;
     cache.updatedAt = new Date().toISOString();
     writeCaches(data);
+    const failedJob = indexJobs.get(cacheId);
+    if (failedJob) {
+      failedJob.status = 'error';
+      indexJobs.set(cacheId, failedJob);
+    }
     logServer('index:error', { cacheId, error: error.message });
     return res.status(500).json({ ok: false, error: error.message || 'index failed', logs });
   }
