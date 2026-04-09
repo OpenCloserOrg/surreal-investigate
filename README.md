@@ -49,6 +49,23 @@ Alternative direct command:
 surreal start --user root --pass root --bind 127.0.0.1:8000 file:./data/surreal.db
 ```
 
+### macOS fallback (recommended if datastore init fails)
+
+If you see datastore load errors on Mac, run this exact sequence:
+
+```bash
+cd /path/to/surreal-investigate
+mkdir -p data
+pkill -f "surreal start" || true
+surreal start --user root --pass root --bind 127.0.0.1:8000 "surrealkv://$(pwd)/data/surreal.db"
+```
+
+Why this works:
+- uses an absolute path via `$(pwd)`
+- ensures the `data/` folder exists
+- clears stale Surreal processes
+- uses `surrealkv://` engine explicitly
+
 > If your `surreal` binary is in `~/.local/bin/surreal`, use that full path.
 
 ---
