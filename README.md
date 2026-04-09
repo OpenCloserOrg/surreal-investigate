@@ -1,5 +1,9 @@
 # Surreal Investigate
 
+<p align="center">
+  <img src="images/Surreal-Investigate.png" alt="Surreal Investigate logo" width="220" />
+</p>
+
 Local-first **SurrealDB + Node.js** investigation app.
 
 When fully running, you can:
