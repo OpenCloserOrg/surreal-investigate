@@ -44,7 +44,27 @@ function writeManifest(cacheId, manifest) {
   fs.writeFileSync(path.join(dir, 'snapshots', `${ts}.json`), JSON.stringify(manifest, null, 2));
 }
 
+async function withTimeout(promise, ms = 15000, label = 'operation') {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 app.get('/api/health', (_req, res) => res.json({ ok: true, app: 'surreal-investigate', port: PORT }));
+app.get('/api/surreal/health', async (_req, res) => {
+  try {
+    await withTimeout(withSurreal(async (db) => db.query('RETURN 1;')), 5000, 'surreal health check');
+    return res.json({ ok: true, surreal: 'reachable', config: surrealConfig });
+  } catch (error) {
+    return res.status(500).json({ ok: false, surreal: 'unreachable', error: error.message, config: surrealConfig });
+  }
+});
 app.get('/api/config', (_req, res) => res.json({ ok: true, surreal: surrealConfig }));
 
 app.get('/api/caches', (_req, res) => res.json({ ok: true, caches: readCaches().caches || [] }));
@@ -106,7 +126,8 @@ app.post('/api/index/:cacheId', async (req, res) => {
 
   try {
     log('Connecting to SurrealDB...');
-    const result = await withSurreal(async (db) => {
+    await withTimeout(withSurreal(async (db) => db.query('RETURN 1;')), 5000, 'surreal precheck');
+    const result = await withTimeout(withSurreal(async (db) => {
       await ensureSchema(db);
       log('Schema ensured.');
       await db.query('DELETE document WHERE cacheId = $cacheId; DELETE chunk WHERE cacheId = $cacheId;', { cacheId });
@@ -165,7 +186,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
       }
 
       return { documentCount, chunkCount };
-    });
+    }), 120000, 'index job');
 
     const manifest = {
       cacheId,
@@ -199,17 +220,32 @@ app.post('/api/query/:cacheId', async (req, res) => {
   if (!question) return res.status(400).json({ ok: false, error: 'question required' });
 
   try {
-    const chunks = await withSurreal(async (db) => {
+    await withTimeout(withSurreal(async (db) => db.query('RETURN 1;')), 5000, 'surreal precheck');
+    const chunks = await withTimeout(withSurreal(async (db) => {
       const rows = await db.query(
         `SELECT fileId, filename, chunkIndex, text
          FROM chunk
          WHERE cacheId = $cacheId
-           AND string::contains(string::lowercase(text), string::lowercase($q))
-         LIMIT 8;`,
-        { cacheId, q: question }
+         LIMIT 2000;`,
+        { cacheId }
       );
-      return rows?.[0]?.result || [];
-    });
+      const all = Array.isArray(rows?.[0]) ? rows[0] : (rows?.[0]?.result || []);
+      const tokens = String(question || '')
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t && t.length >= 3);
+      const score = (txt='') => {
+        const v = String(txt || '').toLowerCase();
+        let s = 0;
+        for (const t of tokens) if (v.includes(t)) s += 1;
+        return s;
+      };
+      return all
+        .map((c) => ({ ...c, score: score(c.text) }))
+        .filter((c) => c.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 8);
+    }), 15000, 'query');
 
     if (mode === 'surreal') {
       return res.json({

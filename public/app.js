@@ -58,8 +58,18 @@ $('load-sample').onclick=async()=>{
   await fetchCaches();
 };
 
+async function checkSurreal(){
+  const r=await fetch('/api/surreal/health');
+  const j=await r.json();
+  if(r.ok&&j.ok){ $('surreal-dot').className='dot green'; $('surreal-status').textContent='Reachable'; return true; }
+  $('surreal-dot').className='dot red'; $('surreal-status').textContent=`Unreachable: ${j.error||'unknown'}`;
+  return false;
+}
+
 $('index-btn').onclick=async()=>{
   const cacheId=selectedCacheId(); if(!cacheId) return;
+  const ok = await checkSurreal();
+  if(!ok){ $('index-log').textContent='Cannot index: SurrealDB is unreachable. Start SurrealDB first.'; return; }
   $('index-log').textContent='Indexing started...';
   const r=await fetch(`/api/index/${cacheId}`,{method:'POST'}); const j=await r.json();
   if(!r.ok){ $('index-log').textContent=(j.logs||[]).map(x=>`- ${x.message}`).join('\n') + `\nERROR: ${j.error}`; await fetchCaches(); return; }
@@ -81,4 +91,4 @@ $('ask-btn').onclick=async()=>{
   $('answer').textContent = `Mode: ${j.mode}\n\n${j.answer}\n\nEvidence:\n${(j.evidence||[]).map((e,i)=>`#${i+1} ${e.filename} [${e.chunkIndex}] score=${(e.score||0).toFixed?.(3) ?? e.score}\n${String(e.text||'').slice(0,240)}...`).join('\n\n')}`;
 };
 
-(async()=>{ loadOpenRouter(); await fetchCaches(); })();
+(async()=>{ loadOpenRouter(); await fetchCaches(); await checkSurreal(); })();

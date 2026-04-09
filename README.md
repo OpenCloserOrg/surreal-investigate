@@ -39,6 +39,12 @@ When fully running, you can:
 ### Start Surreal locally (example)
 
 ```bash
+./scripts-start-surreal.sh
+```
+
+Alternative direct command:
+
+```bash
 surreal start --user root --pass root --bind 127.0.0.1:8000 file:./data/surreal.db
 ```
 
