@@ -600,8 +600,8 @@ Relations: ${JSON.stringify(retrieval.relations.slice(0, 10))}
 
 Return:
 1) direct answer
-2) key links/patterns
-3) possible vulnerabilities or mismatches
+2) key connections/patterns
+3) notable anomalies or mismatches
 4) confidence (low/medium/high) with why.`;
     const aiRequestBody = JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.1 });
     pushTrace('openrouter_request_start', { model, url: 'https://openrouter.ai/api/v1/chat/completions', payloadBytes: aiRequestBody.length });

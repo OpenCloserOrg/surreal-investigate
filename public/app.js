@@ -2,6 +2,7 @@ const supported = ['txt','md','csv','tsv','json','eml','sql','pdf','docx','xlsx'
 const $ = (id) => document.getElementById(id);
 let activeChatId = '';
 let initializedNewChatForCache = new Set();
+let liveTrace = [];
 
 function ext(name=''){ const p=name.split('.'); return p.length>1 ? p.pop().toLowerCase() : ''; }
 function bytes(n=0){ if(n<1024) return `${n} B`; if(n<1048576) return `${(n/1024).toFixed(1)} KB`; if(n<1073741824) return `${(n/1048576).toFixed(1)} MB`; return `${(n/1073741824).toFixed(2)} GB`; }
@@ -9,6 +10,36 @@ function selectedCacheId(){ return $('cache-select').value; }
 function setProgress(v=0){ $('index-progress').style.width = `${Math.max(0, Math.min(100, v))}%`; }
 function relTime(iso=''){ const d=new Date(iso); const s=Math.floor((Date.now()-d.getTime())/1000); if(!iso||Number.isNaN(d.getTime())) return ''; if(s<60) return `${s}s ago`; if(s<3600) return `${Math.floor(s/60)}m ago`; if(s<86400) return `${Math.floor(s/3600)}h ago`; return `${Math.floor(s/86400)}d ago`; }
 function scrollToSection(id){ const el=$(id); if(el) el.scrollIntoView({ behavior:'smooth', block:'start' }); }
+
+function showTraceModal(title, detail){
+  $('trace-modal-title').textContent = title || 'Trace detail';
+  $('trace-modal-body').textContent = typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2);
+  $('trace-modal').classList.remove('hidden');
+}
+function hideTraceModal(){ $('trace-modal').classList.add('hidden'); }
+
+function renderLiveTrace(){
+  const el = $('live-trace');
+  if (!liveTrace.length) { el.innerHTML=''; return; }
+  el.innerHTML = liveTrace.map((t, idx)=>`<div class="trace-item"><div><strong>${t.step}</strong><div class="state">${t.state || 'pending'}</div></div><button class="view" data-idx="${idx}">View</button></div>`).join('');
+  el.querySelectorAll('button[data-idx]').forEach((btn)=>{
+    btn.onclick = ()=>{
+      const i = Number(btn.getAttribute('data-idx'));
+      const item = liveTrace[i];
+      if (!item) return;
+      showTraceModal(item.step, item.detail || item);
+    };
+  });
+}
+function setTraceStep(step, state, detail){
+  const i = liveTrace.findIndex((t)=>t.step===step);
+  if (i === -1) liveTrace.push({ step, state, detail });
+  else {
+    liveTrace[i].state = state;
+    if (detail !== undefined) liveTrace[i].detail = detail;
+  }
+  renderLiveTrace();
+}
 
 function loadOpenRouter(){ $('or-key').value=localStorage.getItem('openrouter.key')||''; $('or-model').value=localStorage.getItem('openrouter.model')||'openai/gpt-4o-mini'; }
 function updateQuestionPlaceholder(){ $('question').placeholder = $('query-mode').value === 'surreal' ? 'Search term(s)' : 'Ask a follow-up question'; }
@@ -37,6 +68,8 @@ async function loadChatMessages(){
 }
 
 $('save-or').onclick=()=>{ localStorage.setItem('openrouter.key',$('or-key').value.trim()); localStorage.setItem('openrouter.model',$('or-model').value.trim()); $('or-dot').className='dot green'; $('or-status').textContent='Saved locally'; };
+$('trace-modal-close').onclick = hideTraceModal;
+$('trace-modal').onclick = (e)=>{ if(e.target.id==='trace-modal') hideTraceModal(); };
 $('ping-or').onclick=async()=>{ $('or-status').textContent='Pinging...'; const r=await fetch('/api/openrouter/ping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:$('or-key').value.trim(),model:$('or-model').value.trim()})}); const j=await r.json(); if(r.ok&&j.ok){ $('or-dot').className='dot green'; $('or-status').textContent='OpenRouter reachable'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`Ping failed: ${j.error||'unknown'}`; }};
 
 async function createNewChatForCache(cacheId, title='New session'){ const r = await fetch(`/api/chats/${cacheId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ title }) }); return r.json(); }
@@ -182,42 +215,53 @@ $('suggest-btn').onclick = async ()=>{
 $('ask-btn').onclick=async()=>{
   const cacheId=selectedCacheId(); const q=$('question').value.trim(); if(!cacheId||!q) return;
   const mode=$('query-mode').value; activeChatId = $('chat-select').value || activeChatId;
+  const payload = { question:q, mode, chatId: activeChatId, queryStrategy: $('query-strategy').value, queryStrategyNotes: $('query-strategy-notes').value.trim(), openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() };
+
   // optimistic user bubble
   const current = $('chat-thread').innerHTML;
   $('chat-thread').innerHTML = current + `<div class="msg user"><div class="meta">user • now</div><div>${q.replace(/</g,'&lt;')}</div></div>`;
-  $('query-status').textContent='Running retrieval...';
-  $('trace').textContent='Step 1: Parse query\nStep 2: Query Surreal chunks + structured tables\nStep 3: Build response';
 
-  const payload = { question:q, mode, chatId: activeChatId, queryStrategy: $('query-strategy').value, queryStrategyNotes: $('query-strategy-notes').value.trim(), openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() };
-  $('trace').textContent = 'Step 1: Parse query\nStep 2: Query Surreal chunks + structured tables\nStep 3: If AI mode, call OpenRouter and await response';
+  liveTrace = [];
+  setTraceStep('parse_query', 'running', { localRoute: `/api/query/${cacheId}`, payloadPreview: { ...payload, openRouterKey: payload.openRouterKey ? '***' : '' } });
+  setTraceStep('surreal_precheck', 'pending', { url: '/api/surreal/health' });
+  setTraceStep('surreal_retrieval', 'pending', { surrealQuery: 'SELECT fileId, filename, chunkIndex, text FROM chunk WHERE cacheId = $cacheId LIMIT 3000;' });
+  if (mode === 'ai') {
+    setTraceStep('openrouter_call', 'pending', { url: 'https://openrouter.ai/api/v1/chat/completions', model: payload.model || 'openai/gpt-4o-mini' });
+  }
+
+  $('query-status').textContent='Running retrieval...';
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 70000);
   let r, j;
   try {
+    setTraceStep('parse_query', 'done');
+    setTraceStep('surreal_precheck', 'running');
     r=await fetch(`/api/query/${cacheId}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal: ctrl.signal});
     j=await r.json();
   } catch (e) {
     clearTimeout(t);
     $('query-status').textContent='Query failed';
-    $('trace').textContent += `\nERROR: ${e.name === 'AbortError' ? 'Request timed out waiting for response' : e.message}`;
+    setTraceStep('surreal_precheck', 'error', { error: e.name === 'AbortError' ? 'Request timed out waiting for response' : e.message });
+    $('trace').textContent = `ERROR: ${e.name === 'AbortError' ? 'Request timed out waiting for response' : e.message}`;
     return;
   }
   clearTimeout(t);
-  if(!r.ok){ $('query-status').textContent='Query failed'; $('trace').textContent = (j.trace||[]).map((x)=>`- ${x.step}${x.model?` model=${x.model}`:''}${x.payloadBytes?` bytes=${x.payloadBytes}`:''}${x.error?` error=${x.error}`:''}`).join('\n') + `\nERROR: ${j.error||'query failed'}`; return; }
+
+  if (j?.trace?.length) {
+    for (const step of j.trace) {
+      if (step.step?.includes('surreal_precheck')) setTraceStep('surreal_precheck', 'done', step);
+      if (step.step?.includes('surreal_retrieval')) setTraceStep('surreal_retrieval', 'done', step);
+      if (step.step?.includes('openrouter_request_start')) setTraceStep('openrouter_call', 'running', step);
+      if (step.step?.includes('openrouter_response_ok')) setTraceStep('openrouter_call', 'done', step);
+      if (step.step?.includes('openrouter_error')) setTraceStep('openrouter_call', 'error', step);
+    }
+  }
+
+  if(!r.ok){ $('query-status').textContent='Query failed'; $('trace').textContent = (j.trace||[]).map((x)=>JSON.stringify(x,null,2)).join('\n\n') + `\nERROR: ${j.error||'query failed'}`; return; }
+
   if (j.chatId) activeChatId = j.chatId;
   const struct = j.structured || {};
-  const traceLines = (j.trace || []).map((x, idx) => {
-    const bits = [x.step];
-    if (x.model) bits.push(`model=${x.model}`);
-    if (x.payloadBytes) bits.push(`payload=${x.payloadBytes}B`);
-    if (typeof x.chunks === 'number') bits.push(`chunks=${x.chunks}`);
-    if (typeof x.entities === 'number') bits.push(`entities=${x.entities}`);
-    if (typeof x.activities === 'number') bits.push(`activities=${x.activities}`);
-    if (typeof x.intents === 'number') bits.push(`intents=${x.intents}`);
-    if (x.error) bits.push(`error=${x.error}`);
-    const detail = JSON.stringify(x, null, 2);
-    return `[${idx+1}] ${bits.join(' | ')}\n${detail}`;
-  });
+  const traceLines = (j.trace || []).map((x, idx) => `[${idx+1}] ${x.step}\n${JSON.stringify(x, null, 2)}`);
   $('trace').textContent = `${traceLines.join('\n\n')}\n\nSurreal returned:\n- chunks: ${(j.evidence||[]).length}\n- entities: ${struct.entities?.length||0}\n- events: ${struct.events?.length||0}\n- activities: ${struct.activities?.length||0}\n- intents: ${struct.intents?.length||0}\n- anomalies: ${struct.anomalies?.length||0}\n- relations: ${struct.relations?.length||0}\n${mode==='ai'?'AI synthesized final answer using these findings.':'Surreal-only response returned.'}`;
   $('query-status').textContent=`Done. mode=${j.mode}`;
   await fetchChats();
@@ -226,12 +270,7 @@ $('ask-btn').onclick=async()=>{
   try {
     const sr = await fetch(`/api/suggest-questions/${cacheId}`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        chatId: activeChatId,
-        mode: 'heuristic',
-        openRouterKey: $('or-key').value.trim(),
-        model: $('or-model').value.trim()
-      })
+      body: JSON.stringify({ chatId: activeChatId, mode: 'heuristic', openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() })
     });
     const sj = await sr.json();
     if (sr.ok && sj.ok) renderSuggestions(sj.suggestions || []);

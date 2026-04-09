@@ -98,9 +98,20 @@
       </div>
       <div id="suggestions" class="suggestions"></div>
       <p class="muted" id="query-status">Idle.</p>
+      <div id="live-trace" class="live-trace"></div>
       <pre id="trace" class="log"></pre>
     </section>
   </main>
+
+  <div id="trace-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <strong id="trace-modal-title">Trace detail</strong>
+        <button id="trace-modal-close">Close</button>
+      </div>
+      <pre id="trace-modal-body" class="log"></pre>
+    </div>
+  </div>
   <script src="/app.js"></script>
 </body>
 </html>
