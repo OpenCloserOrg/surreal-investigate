@@ -469,9 +469,19 @@ app.post('/api/query/:cacheId', async (req, res) => {
 
   try {
     logServer('query:start', { cacheId, mode, chatId, queryStrategy });
-    pushTrace('parse_query', { mode, queryStrategy, questionLength: question.length, questionPreview: question.slice(0, 180) });
+    pushTrace('parse_query', {
+      explanation: 'Normalize user input and build query execution plan (mode/strategy/chat context) before retrieval.',
+      mode,
+      queryStrategy,
+      questionLength: question.length,
+      questionPreview: question.slice(0, 180)
+    });
     await withTimeout(withSurreal(async (db) => db.query('RETURN 1;')), 5000, 'surreal precheck');
-    pushTrace('surreal_precheck_ok');
+    pushTrace('surreal_precheck_ok', {
+      explanation: 'Ping SurrealDB first to verify connectivity before running retrieval queries.',
+      request: { query: 'RETURN 1;' },
+      response: { ok: true }
+    });
     const retrieval = await withTimeout(withSurreal(async (db) => {
       const chunkQuery = `SELECT fileId, filename, chunkIndex, text FROM chunk WHERE cacheId = $cacheId LIMIT 3000;`;
       const [chunkRows, entityRows, eventRows, activityRows, intentRows, anomalyRows, relationRows] = await Promise.all([
@@ -529,14 +539,26 @@ app.post('/api/query/:cacheId', async (req, res) => {
 
     const chunks = retrieval.chunks;
     pushTrace('surreal_retrieval_done', {
-      surrealQuery: 'SELECT fileId, filename, chunkIndex, text FROM chunk WHERE cacheId = $cacheId LIMIT 3000;',
-      chunks: retrieval.chunks.length,
-      entities: retrieval.entities.length,
-      events: retrieval.events.length,
-      activities: retrieval.activities.length,
-      intents: retrieval.intents.length,
-      anomalies: retrieval.anomalies.length,
-      relations: retrieval.relations.length
+      explanation: 'Query chunk + structured tables in SurrealDB, then score/rank candidates for response synthesis.',
+      request: {
+        chunkQuery: 'SELECT fileId, filename, chunkIndex, text FROM chunk WHERE cacheId = $cacheId LIMIT 3000;',
+        structuredTables: ['entity', 'event', 'activity', 'intent', 'anomaly', 'relation']
+      },
+      response: {
+        chunks: retrieval.chunks.length,
+        entities: retrieval.entities.length,
+        events: retrieval.events.length,
+        activities: retrieval.activities.length,
+        intents: retrieval.intents.length,
+        anomalies: retrieval.anomalies.length,
+        relations: retrieval.relations.length,
+        sampleChunk: retrieval.chunks[0] ? {
+          filename: retrieval.chunks[0].filename,
+          chunkIndex: retrieval.chunks[0].chunkIndex,
+          score: retrieval.chunks[0].score,
+          textPreview: String(retrieval.chunks[0].text || '').slice(0, 220)
+        } : null
+      }
     });
 
     if (mode === 'surreal') {
@@ -577,7 +599,6 @@ app.post('/api/query/:cacheId', async (req, res) => {
     const model = String(req.body?.model || '').trim() || 'openai/gpt-4o-mini';
     if (!apiKey) return res.status(400).json({ ok: false, error: 'OpenRouter key required for ai mode.' });
 
-    pushTrace('build_ai_prompt');
     const prior = readChatLog(cacheId, chatId).messages || [];
     const priorTurns = prior.slice(-8).map((m) => `${m.role?.toUpperCase?.() || 'MSG'}: ${String(m.content || '').slice(0, 220)}`).join('\n');
     const prompt = `You are an investigation assistant. Answer using only supplied evidence snippets and structured findings.
@@ -603,9 +624,25 @@ Return:
 2) key connections/patterns
 3) notable anomalies or mismatches
 4) confidence (low/medium/high) with why.`;
+    pushTrace('build_ai_prompt', {
+      explanation: 'Compose grounded AI prompt from Surreal retrieval output + recent chat context.',
+      request: {
+        model,
+        promptChars: prompt.length,
+        promptPreview: prompt.slice(0, 1200)
+      }
+    });
     const aiRequestBody = JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.1 });
-    pushTrace('openrouter_request_start', { model, url: 'https://openrouter.ai/api/v1/chat/completions', payloadBytes: aiRequestBody.length });
-    pushTrace('openrouter_awaiting_response');
+    pushTrace('openrouter_request_start', {
+      explanation: 'Send grounded prompt to OpenRouter chat completions endpoint.',
+      model,
+      url: 'https://openrouter.ai/api/v1/chat/completions',
+      request: {
+        payloadBytes: aiRequestBody.length,
+        bodyPreview: aiRequestBody.slice(0, 1400)
+      }
+    });
+    pushTrace('openrouter_awaiting_response', { explanation: 'Waiting for model completion from OpenRouter.' });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 60000);
     const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -619,7 +656,14 @@ Return:
       pushTrace('openrouter_error', { status: r.status, error: j?.error?.message || 'unknown' });
       return res.status(502).json({ ok: false, error: `OpenRouter error: ${j?.error?.message || r.status}`, trace });
     }
-    pushTrace('openrouter_response_ok', { status: r.status, hasChoices: Array.isArray(j?.choices) });
+    pushTrace('openrouter_response_ok', {
+      explanation: 'OpenRouter returned completion payload successfully.',
+      response: {
+        status: r.status,
+        hasChoices: Array.isArray(j?.choices),
+        responsePreview: String(j?.choices?.[0]?.message?.content || '').slice(0, 400)
+      }
+    });
     const answer = j?.choices?.[0]?.message?.content || 'No AI answer returned.';
 
     appendChatLog(cacheId, chatId, { role: 'user', mode, queryStrategy, content: question });

@@ -222,11 +222,23 @@ $('ask-btn').onclick=async()=>{
   $('chat-thread').innerHTML = current + `<div class="msg user"><div class="meta">user • now</div><div>${q.replace(/</g,'&lt;')}</div></div>`;
 
   liveTrace = [];
-  setTraceStep('parse_query', 'running', { localRoute: `/api/query/${cacheId}`, payloadPreview: { ...payload, openRouterKey: payload.openRouterKey ? '***' : '' } });
-  setTraceStep('surreal_precheck', 'pending', { url: '/api/surreal/health' });
-  setTraceStep('surreal_retrieval', 'pending', { surrealQuery: 'SELECT fileId, filename, chunkIndex, text FROM chunk WHERE cacheId = $cacheId LIMIT 3000;' });
+  setTraceStep('parse_query', 'running', {
+    explanation: 'Prepare request plan (mode/strategy/chat) and package payload for /api/query.',
+    request: { url: `/api/query/${cacheId}`, payload: { ...payload, openRouterKey: payload.openRouterKey ? '***' : '' } }
+  });
+  setTraceStep('surreal_precheck', 'pending', {
+    explanation: 'Ping SurrealDB before heavy retrieval calls.',
+    request: { url: '/api/surreal/health', query: 'RETURN 1;' }
+  });
+  setTraceStep('surreal_retrieval', 'pending', {
+    explanation: 'Query chunk + structured tables and rank candidates.',
+    request: { queryTemplate: 'SELECT fileId, filename, chunkIndex, text FROM chunk WHERE cacheId = $cacheId LIMIT 3000;' }
+  });
   if (mode === 'ai') {
-    setTraceStep('openrouter_call', 'pending', { url: 'https://openrouter.ai/api/v1/chat/completions', model: payload.model || 'openai/gpt-4o-mini' });
+    setTraceStep('openrouter_call', 'pending', {
+      explanation: 'Send grounded prompt to OpenRouter after retrieval.',
+      request: { url: 'https://openrouter.ai/api/v1/chat/completions', model: payload.model || 'openai/gpt-4o-mini' }
+    });
   }
 
   $('query-status').textContent='Running retrieval...';
@@ -251,7 +263,9 @@ $('ask-btn').onclick=async()=>{
     for (const step of j.trace) {
       if (step.step?.includes('surreal_precheck')) setTraceStep('surreal_precheck', 'done', step);
       if (step.step?.includes('surreal_retrieval')) setTraceStep('surreal_retrieval', 'done', step);
+      if (step.step?.includes('build_ai_prompt')) setTraceStep('openrouter_call', 'running', step);
       if (step.step?.includes('openrouter_request_start')) setTraceStep('openrouter_call', 'running', step);
+      if (step.step?.includes('openrouter_awaiting_response')) setTraceStep('openrouter_call', 'running', step);
       if (step.step?.includes('openrouter_response_ok')) setTraceStep('openrouter_call', 'done', step);
       if (step.step?.includes('openrouter_error')) setTraceStep('openrouter_call', 'error', step);
     }
