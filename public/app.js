@@ -206,7 +206,7 @@ $('ask-btn').onclick=async()=>{
   if(!r.ok){ $('query-status').textContent='Query failed'; $('trace').textContent = (j.trace||[]).map((x)=>`- ${x.step}${x.model?` model=${x.model}`:''}${x.payloadBytes?` bytes=${x.payloadBytes}`:''}${x.error?` error=${x.error}`:''}`).join('\n') + `\nERROR: ${j.error||'query failed'}`; return; }
   if (j.chatId) activeChatId = j.chatId;
   const struct = j.structured || {};
-  const traceLines = (j.trace || []).map((x) => {
+  const traceLines = (j.trace || []).map((x, idx) => {
     const bits = [x.step];
     if (x.model) bits.push(`model=${x.model}`);
     if (x.payloadBytes) bits.push(`payload=${x.payloadBytes}B`);
@@ -215,9 +215,10 @@ $('ask-btn').onclick=async()=>{
     if (typeof x.activities === 'number') bits.push(`activities=${x.activities}`);
     if (typeof x.intents === 'number') bits.push(`intents=${x.intents}`);
     if (x.error) bits.push(`error=${x.error}`);
-    return `- ${bits.join(' | ')}`;
+    const detail = JSON.stringify(x, null, 2);
+    return `[${idx+1}] ${bits.join(' | ')}\n${detail}`;
   });
-  $('trace').textContent = `${traceLines.join('\n')}\n\nSurreal returned:\n- chunks: ${(j.evidence||[]).length}\n- entities: ${struct.entities?.length||0}\n- events: ${struct.events?.length||0}\n- activities: ${struct.activities?.length||0}\n- intents: ${struct.intents?.length||0}\n- anomalies: ${struct.anomalies?.length||0}\n- relations: ${struct.relations?.length||0}\n${mode==='ai'?'AI synthesized final answer using these findings.':'Surreal-only response returned.'}`;
+  $('trace').textContent = `${traceLines.join('\n\n')}\n\nSurreal returned:\n- chunks: ${(j.evidence||[]).length}\n- entities: ${struct.entities?.length||0}\n- events: ${struct.events?.length||0}\n- activities: ${struct.activities?.length||0}\n- intents: ${struct.intents?.length||0}\n- anomalies: ${struct.anomalies?.length||0}\n- relations: ${struct.relations?.length||0}\n${mode==='ai'?'AI synthesized final answer using these findings.':'Surreal-only response returned.'}`;
   $('query-status').textContent=`Done. mode=${j.mode}`;
   await fetchChats();
   await loadChatMessages();

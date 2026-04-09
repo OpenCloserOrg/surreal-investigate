@@ -469,12 +469,13 @@ app.post('/api/query/:cacheId', async (req, res) => {
 
   try {
     logServer('query:start', { cacheId, mode, chatId, queryStrategy });
-    pushTrace('parse_query', { mode, queryStrategy, questionLength: question.length });
+    pushTrace('parse_query', { mode, queryStrategy, questionLength: question.length, questionPreview: question.slice(0, 180) });
     await withTimeout(withSurreal(async (db) => db.query('RETURN 1;')), 5000, 'surreal precheck');
     pushTrace('surreal_precheck_ok');
     const retrieval = await withTimeout(withSurreal(async (db) => {
+      const chunkQuery = `SELECT fileId, filename, chunkIndex, text FROM chunk WHERE cacheId = $cacheId LIMIT 3000;`;
       const [chunkRows, entityRows, eventRows, activityRows, intentRows, anomalyRows, relationRows] = await Promise.all([
-        db.query(`SELECT fileId, filename, chunkIndex, text FROM chunk WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
+        db.query(chunkQuery, { cacheId }),
         db.query(`SELECT type, value, normalized, filename, chunkIndex, confidence FROM entity WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
         db.query(`SELECT type, amount, currency, rawAmount, dates, filename, chunkIndex, confidence FROM event WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
         db.query(`SELECT type, actor, action, locations, dates, filename, chunkIndex, confidence FROM activity WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
@@ -500,11 +501,14 @@ app.post('/api/query/:cacheId', async (req, res) => {
         return s;
       };
 
-      const chunks = allChunks
+      let chunks = allChunks
         .map((c) => ({ ...c, score: scoreText(c.text) }))
         .filter((c) => c.score > 0)
         .sort((a, b) => b.score - a.score)
         .slice(0, 8);
+      if (!chunks.length && allChunks.length) {
+        chunks = allChunks.slice(0, 3).map((c) => ({ ...c, score: 0 }));
+      }
 
       const byTokenMatch = (obj) => {
         const v = JSON.stringify(obj).toLowerCase();
@@ -525,6 +529,7 @@ app.post('/api/query/:cacheId', async (req, res) => {
 
     const chunks = retrieval.chunks;
     pushTrace('surreal_retrieval_done', {
+      surrealQuery: 'SELECT fileId, filename, chunkIndex, text FROM chunk WHERE cacheId = $cacheId LIMIT 3000;',
       chunks: retrieval.chunks.length,
       entities: retrieval.entities.length,
       events: retrieval.events.length,
@@ -599,7 +604,8 @@ Return:
 3) possible vulnerabilities or mismatches
 4) confidence (low/medium/high) with why.`;
     const aiRequestBody = JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.1 });
-    pushTrace('openrouter_request_start', { model, payloadBytes: aiRequestBody.length });
+    pushTrace('openrouter_request_start', { model, url: 'https://openrouter.ai/api/v1/chat/completions', payloadBytes: aiRequestBody.length });
+    pushTrace('openrouter_awaiting_response');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 60000);
     const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
