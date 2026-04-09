@@ -68,6 +68,7 @@
 
     <section class="card">
       <h2>Ask Questions</h2>
+      <p class="muted">Active cache: <strong id="active-cache-label">None</strong></p>
       <div class="row">
         <select id="query-mode">
           <option value="surreal">Surreal search only</option>
@@ -87,12 +88,13 @@
         <select id="chat-select"></select>
         <button id="new-chat">New Chat</button>
       </div>
+      <div id="chat-thread" class="chat-thread"></div>
       <div class="row">
         <input id="question" placeholder="Search term (Surreal mode) or question (Surreal+AI)" />
         <button id="ask-btn">Run</button>
       </div>
       <p class="muted" id="query-status">Idle.</p>
-      <pre id="answer" class="log"></pre>
+      <pre id="trace" class="log"></pre>
     </section>
   </main>
   <script src="/app.js"></script>
