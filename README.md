@@ -44,6 +44,9 @@ This project now uses an **investigation-first indexing strategy** by default:
 4. Derive structured investigation signals per chunk:
    - **entities** (people, orgs, emails)
    - **events** (e.g., money/transfer-style amounts)
+   - **activities** (actions people took: met/called/sent/requested/etc.)
+   - **intent signals** (request, urgency, concealment, authorization-style language)
+   - **location/time context** (captured where detectable from text patterns)
    - **anomalies** (concealment, threshold splitting, integrity mismatch indicators)
    - **relations** (co-occurrence links between entities)
 5. At query time, combine:

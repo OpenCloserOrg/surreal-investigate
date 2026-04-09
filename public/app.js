@@ -211,7 +211,7 @@ $('ask-btn').onclick=async()=>{
   if (j.chatId) activeChatId = j.chatId;
   $('query-status').textContent=`Done. mode=${j.mode} evidence=${(j.evidence||[]).length}`;
   const structuredSummary = j.structured
-    ? `\n\nStructured Findings:\n- entities: ${j.structured.entities?.length || 0}\n- events: ${j.structured.events?.length || 0}\n- anomalies: ${j.structured.anomalies?.length || 0}\n- relations: ${j.structured.relations?.length || 0}`
+    ? `\n\nStructured Findings:\n- entities: ${j.structured.entities?.length || 0}\n- events: ${j.structured.events?.length || 0}\n- activities: ${j.structured.activities?.length || 0}\n- intents: ${j.structured.intents?.length || 0}\n- anomalies: ${j.structured.anomalies?.length || 0}\n- relations: ${j.structured.relations?.length || 0}`
     : '';
   $('answer').textContent = `Mode: ${j.mode}\nChat: ${j.chatId || activeChatId}\nStrategy: ${payload.queryStrategy}${payload.queryStrategyNotes?` (${payload.queryStrategyNotes})`:''}\n\n${j.answer}${structuredSummary}\n\nEvidence:\n${(j.evidence||[]).map((e,i)=>`#${i+1} ${e.filename} [${e.chunkIndex}] score=${(e.score||0).toFixed?.(3) ?? e.score}\n${String(e.text||'').slice(0,240)}...`).join('\n\n')}`;
   await fetchChats();

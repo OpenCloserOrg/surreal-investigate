@@ -191,10 +191,10 @@ app.post('/api/index/:cacheId', async (req, res) => {
       await ensureSchema(db);
       log('Schema ensured.');
       await db.query(
-        'DELETE document WHERE cacheId = $cacheId; DELETE chunk WHERE cacheId = $cacheId; DELETE entity WHERE cacheId = $cacheId; DELETE event WHERE cacheId = $cacheId; DELETE relation WHERE cacheId = $cacheId; DELETE anomaly WHERE cacheId = $cacheId;',
+        'DELETE document WHERE cacheId = $cacheId; DELETE chunk WHERE cacheId = $cacheId; DELETE entity WHERE cacheId = $cacheId; DELETE event WHERE cacheId = $cacheId; DELETE activity WHERE cacheId = $cacheId; DELETE intent WHERE cacheId = $cacheId; DELETE relation WHERE cacheId = $cacheId; DELETE anomaly WHERE cacheId = $cacheId;',
         { cacheId }
       );
-      log('Previous index rows for cache cleared (documents, chunks, entities, events, relations, anomalies).');
+      log('Previous index rows for cache cleared (documents, chunks, entities, events, activities, intents, relations, anomalies).');
 
       const allFiles = cache.files || [];
       const files = allFiles.filter((f) => f.absPath && fs.existsSync(f.absPath));
@@ -203,6 +203,8 @@ app.post('/api/index/:cacheId', async (req, res) => {
       let chunkCount = 0;
       let entityCount = 0;
       let eventCount = 0;
+      let activityCount = 0;
+      let intentCount = 0;
       let relationCount = 0;
       let anomalyCount = 0;
 
@@ -260,6 +262,14 @@ app.post('/api/index/:cacheId', async (req, res) => {
             await db.query('INSERT INTO event $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...ev } });
             eventCount += 1;
           }
+          for (const act of (analysis.activities || [])) {
+            await db.query('INSERT INTO activity $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...act } });
+            activityCount += 1;
+          }
+          for (const intent of (analysis.intents || [])) {
+            await db.query('INSERT INTO intent $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...intent } });
+            intentCount += 1;
+          }
           for (const an of analysis.anomalies) {
             await db.query('INSERT INTO anomaly $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...an } });
             anomalyCount += 1;
@@ -270,10 +280,10 @@ app.post('/api/index/:cacheId', async (req, res) => {
             relationCount += 1;
           }
         }
-        log(`Indexed ${file.originalName}: ${summary.wordCount} words, ${chunks.length} chunks, entities=${entityCount}, events=${eventCount}, anomalies=${anomalyCount} (method: ${extracted.method || 'unknown'}).`);
+        log(`Indexed ${file.originalName}: ${summary.wordCount} words, ${chunks.length} chunks, entities=${entityCount}, events=${eventCount}, activities=${activityCount}, intents=${intentCount}, anomalies=${anomalyCount} (method: ${extracted.method || 'unknown'}).`);
       }
 
-      return { documentCount, chunkCount, entityCount, eventCount, relationCount, anomalyCount };
+      return { documentCount, chunkCount, entityCount, eventCount, activityCount, intentCount, relationCount, anomalyCount };
     }), 120000, 'index job');
 
     const manifest = {
@@ -324,10 +334,12 @@ app.post('/api/query/:cacheId', async (req, res) => {
     logServer('query:start', { cacheId, mode, chatId, queryStrategy });
     await withTimeout(withSurreal(async (db) => db.query('RETURN 1;')), 5000, 'surreal precheck');
     const retrieval = await withTimeout(withSurreal(async (db) => {
-      const [chunkRows, entityRows, eventRows, anomalyRows, relationRows] = await Promise.all([
+      const [chunkRows, entityRows, eventRows, activityRows, intentRows, anomalyRows, relationRows] = await Promise.all([
         db.query(`SELECT fileId, filename, chunkIndex, text FROM chunk WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
         db.query(`SELECT type, value, normalized, filename, chunkIndex, confidence FROM entity WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
-        db.query(`SELECT type, amount, currency, rawAmount, filename, chunkIndex, confidence FROM event WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
+        db.query(`SELECT type, amount, currency, rawAmount, dates, filename, chunkIndex, confidence FROM event WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
+        db.query(`SELECT type, actor, action, locations, dates, filename, chunkIndex, confidence FROM activity WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
+        db.query(`SELECT type, confidence, filename, chunkIndex FROM intent WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
         db.query(`SELECT type, severity, rationale, filename, chunkIndex FROM anomaly WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
         db.query(`SELECT type, sourceType, sourceValue, targetType, targetValue, filename, chunkIndex FROM relation WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId })
       ]);
@@ -336,6 +348,8 @@ app.post('/api/query/:cacheId', async (req, res) => {
       const allChunks = rowsToList(chunkRows);
       const allEntities = rowsToList(entityRows);
       const allEvents = rowsToList(eventRows);
+      const allActivities = rowsToList(activityRows);
+      const allIntents = rowsToList(intentRows);
       const allAnomalies = rowsToList(anomalyRows);
       const allRelations = rowsToList(relationRows);
 
@@ -362,10 +376,12 @@ app.post('/api/query/:cacheId', async (req, res) => {
 
       const entities = allEntities.map((e) => ({ ...e, score: byTokenMatch(e) })).filter((e) => e.score > 0).sort((a, b) => b.score - a.score).slice(0, 12);
       const events = allEvents.map((e) => ({ ...e, score: byTokenMatch(e) })).filter((e) => e.score > 0).sort((a, b) => b.score - a.score).slice(0, 12);
+      const activities = allActivities.map((a) => ({ ...a, score: byTokenMatch(a) })).filter((a) => a.score > 0).sort((a, b) => b.score - a.score).slice(0, 12);
+      const intents = allIntents.map((i) => ({ ...i, score: byTokenMatch(i) })).filter((i) => i.score > 0).sort((a, b) => b.score - a.score).slice(0, 10);
       const anomalies = allAnomalies.map((a) => ({ ...a, score: byTokenMatch(a) })).filter((a) => a.score > 0).sort((a, b) => b.score - a.score).slice(0, 10);
       const relations = allRelations.map((r) => ({ ...r, score: byTokenMatch(r) })).filter((r) => r.score > 0).sort((a, b) => b.score - a.score).slice(0, 10);
 
-      return { chunks, entities, events, anomalies, relations, tokenCount: tokens.length };
+      return { chunks, entities, events, activities, intents, anomalies, relations, tokenCount: tokens.length };
     }), 20000, 'query');
 
     const chunks = retrieval.chunks;
@@ -375,10 +391,12 @@ app.post('/api/query/:cacheId', async (req, res) => {
         `Chunks: ${chunks.length}`,
         `Entities: ${retrieval.entities.length}`,
         `Events: ${retrieval.events.length}`,
+        `Activities: ${retrieval.activities.length}`,
+        `Intents: ${retrieval.intents.length}`,
         `Anomalies: ${retrieval.anomalies.length}`,
         `Relations: ${retrieval.relations.length}`
       ].join(' | ');
-      const answer = chunks.length || retrieval.entities.length || retrieval.events.length || retrieval.anomalies.length
+      const answer = chunks.length || retrieval.entities.length || retrieval.events.length || retrieval.activities.length || retrieval.intents.length || retrieval.anomalies.length
         ? `Found structured matches. ${summary}`
         : 'No matching chunks or structured findings found in Surreal index.';
       appendChatLog(cacheId, chatId, { role: 'user', mode, queryStrategy, content: question });
@@ -393,6 +411,8 @@ app.post('/api/query/:cacheId', async (req, res) => {
         structured: {
           entities: retrieval.entities,
           events: retrieval.events,
+          activities: retrieval.activities,
+          intents: retrieval.intents,
           anomalies: retrieval.anomalies,
           relations: retrieval.relations
         }
@@ -418,6 +438,8 @@ ${c.text.slice(0, 1200)}`).join('\n\n')}
 Structured Findings:
 Entities: ${JSON.stringify(retrieval.entities.slice(0, 12))}
 Events: ${JSON.stringify(retrieval.events.slice(0, 12))}
+Activities: ${JSON.stringify(retrieval.activities.slice(0, 12))}
+Intents: ${JSON.stringify(retrieval.intents.slice(0, 10))}
 Anomalies: ${JSON.stringify(retrieval.anomalies.slice(0, 10))}
 Relations: ${JSON.stringify(retrieval.relations.slice(0, 10))}
 
@@ -447,6 +469,8 @@ Return:
       structured: {
         entities: retrieval.entities,
         events: retrieval.events,
+        activities: retrieval.activities,
+        intents: retrieval.intents,
         anomalies: retrieval.anomalies,
         relations: retrieval.relations
       }
