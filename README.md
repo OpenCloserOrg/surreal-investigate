@@ -118,7 +118,10 @@ SURREAL_NS=surreal_investigate
 SURREAL_DB=main
 SURREAL_USER=root
 SURREAL_PASS=root
+INDEX_JOB_TIMEOUT_MS=1200000
 ```
+
+`INDEX_JOB_TIMEOUT_MS` defaults to 20 minutes.
 
 ---
 

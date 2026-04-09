@@ -15,6 +15,7 @@ const INDEXES_DIR = path.join(ROOT, 'indexes');
 const DATA_DIR = path.join(ROOT, 'data');
 const CHAT_LOGS_DIR = path.join(ROOT, 'chat-logs');
 const CACHES_JSON = path.join(APP_DIR, 'caches.json');
+const INDEX_JOB_TIMEOUT_MS = Number(process.env.INDEX_JOB_TIMEOUT_MS || 20 * 60 * 1000);
 const indexJobs = new Map();
 
 for (const p of [APP_DIR, UPLOADS_DIR, INDEXES_DIR, DATA_DIR, CHAT_LOGS_DIR]) fs.mkdirSync(p, { recursive: true });
@@ -348,7 +349,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
       }
 
       return { documentCount, chunkCount, entityCount, eventCount, activityCount, intentCount, relationCount, anomalyCount };
-    }), 120000, 'index job');
+    }), INDEX_JOB_TIMEOUT_MS, 'index job');
 
     const summaryRows = await withTimeout(withSurreal(async (db) => {
       const [ent, ev, an] = await Promise.all([
