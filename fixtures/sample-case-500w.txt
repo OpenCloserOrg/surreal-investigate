@@ -1,0 +1,13 @@
+Mara Voss kept two phones: one for clients and one for the Harbor Circle. On a windy Monday, she met Ilyas Ward at a dockside cafe in Rotterdam. Ilyas carried a gray envelope and spoke carefully, as if every sentence had already been rehearsed. He said the transfer from North Quay Holdings to Bright Lantern BV was "consulting," but the invoice had no project code. Mara wrote that down.
+
+By Tuesday, Tomas Reeve forwarded three emails to Mara. The first showed a payment schedule of four installments, each slightly under a reporting threshold. The second included an attachment called "shipment-adjusted.xlsx" with line items that did not match the shipping ledger. The third was short: "Use Renata's account for interim routing. Delete after review."
+
+Renata Selo denied involvement in person. In messages, though, she asked Ilyas whether "the old Zurich channel" was still open. She also asked for a fresh beneficiary list and suggested replacing two names with shell entities registered in Cyprus. Later that day, she met Jonah Pike near Central Station and handed him a folded note. Security footage timestamped the meeting at 18:42.
+
+On Wednesday, Jonah purchased a prepaid SIM card and called an unlisted number five times in fourteen minutes. Billing metadata tied that number to a VoIP provider used by Harbor Circle contractors. An hour later, Bright Lantern BV received a transfer labeled "equipment calibration" from North Quay. Minutes after that, Bright Lantern sent funds to three recipients: a logistics broker in Antwerp, a "market research" firm with no staff records, and a private account in Lisbon controlled by a nominee director.
+
+Lena Ortiz, an internal auditor at North Quay, flagged inconsistencies in procurement approvals. She discovered duplicate signature blocks on two contracts and noticed that one approval came from an executive who was abroad at the claimed signing time. Lena exported the relevant email headers and shared them with Mara using an encrypted drive.
+
+Thursday brought pressure. Ilyas asked Mara to pause her review "for legal sensitivity," while Tomas texted that "everyone is aligned" and "this is normal quarter-end cleanup." Renata, meanwhile, requested a revised memo removing references to Zurich and replacing "beneficial owner" with "counterparty administrator."
+
+By Friday, Mara mapped the relationships: North Quay originated funds, Bright Lantern fragmented payments, Jonah handled tactical communication, and Renata shaped documentation language. The pattern suggested coordination, concealment, and deliberate narrative control.

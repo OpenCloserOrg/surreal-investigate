@@ -1,180 +1,126 @@
 # Surreal Investigate
 
-A local-first **SurrealDB + Node.js** investigation workspace for large document dumps (emails, spreadsheets, docs, txt, etc.).
+Local-first **SurrealDB + Node.js** investigation app.
 
-Goal: make forensic-style investigation intuitive:
-- ingest files in batches (“caches” / case sets)
-- extract + normalize text
-- index into SurrealDB
-- ask questions in either:
-  - **Surreal-only mode** (no LLM cost)
-  - **Surreal + AI mode** (OpenRouter-backed synthesis)
+When fully running, you can:
+1. Create a cache (case bucket)
+2. Upload files (or load sample fixture)
+3. Index into SurrealDB
+4. See **Ready for questions**
+5. Ask in either:
+   - **Surreal only** (no LLM cost)
+   - **Surreal + AI** (OpenRouter)
 
----
+## Current implemented features
 
-## Current status
-
-This repo is in active build-out.
-
-### Implemented now
-
-- README baseline ✅
-- Node app scaffold ✅
-- `npm install` + `npm start` + UI on `http://localhost:3000` ✅
-- Cache creation API + local metadata persistence (`.app/caches.json`) ✅
-- Multi-file upload API (`/api/upload`) + per-cache storage in `uploads/<cache-id>/` ✅
-- File preview table in UI (name, size, extension, supported status) ✅
-- OpenRouter key/model local storage UI + simple status dot ✅
-- Smoke test (`npm test`) for health endpoint ✅
-
-### Build sequence (incremental pushes)
-
-1. **README + architecture baseline** ✅
-2. **App scaffold (Node server + UI + upload queue)** ✅
-3. File extraction pipeline (type support + conversion to text)
-4. SurrealDB schema + indexing workers
-5. Query console (Surreal-only / Surreal+AI toggle)
-6. Cache management (append files, re-index, preserve snapshots)
-7. Persistence polish + deploy docs + tests
+- `npm install` + `npm start` on `http://localhost:3000`
+- Cache CRUD (create/list)
+- File upload queue and support preview
+- Supported extraction now: `.txt .md .csv .json .eml`
+- Surreal indexing endpoint
+- Index logs + readiness state
+- Query endpoint with two modes:
+  - Surreal keyword/BM25 retrieval
+  - Surreal retrieval + OpenRouter synthesis
+- OpenRouter key/model local storage
+- OpenRouter ping health check (green/red)
+- Manifest persistence:
+  - `indexes/<cache-id>/manifest.json`
+  - `indexes/<cache-id>/snapshots/<timestamp>.json`
+- Sample fixture for flow testing: `fixtures/sample-case-500w.txt`
 
 ---
 
-## Product requirements (target behavior)
+## Prerequisites
 
-- `npm install` + `npm start` should run locally.
-- App opens on `http://localhost:3000`.
-- UI supports selecting/uploading many files.
-- Each file shows:
-  - name
-  - size
-  - detected type
-  - supported/unsupported status
-- Files can be grouped into named **caches** (investigation sets).
-- Caches can be expanded with additional files and re-indexed without losing old snapshots.
-- Index artifacts persist to local folders (and survive restart).
-- System shows “**Ready for questions**” once index build completes.
-- Query mode toggle:
-  - **Surreal-only**
-  - **Surreal + AI**
-- OpenRouter key + model can be entered in UI and saved locally (browser localStorage).
-- OpenRouter health check includes red/green indicator.
-- During long operations, UI shows step-by-step loading messages explaining what is happening.
+- Node 20+
+- SurrealDB server running locally (or remote)
 
----
+### Start Surreal locally (example)
 
-## Planned architecture
-
-## Runtime
-- Node.js server (Express)
-- SurrealDB Node SDK (`surrealdb`)
-- Local filesystem persistence for uploads/index manifests
-
-## Storage layout (planned)
-
-```txt
-surreal-investigate/
-  data/
-    surreal/                # Surreal file DB or runtime metadata
-  uploads/
-    <cache-id>/             # original uploaded files
-  indexes/
-    <cache-id>/
-      manifest.json         # index metadata + schema version + stats
-      snapshots/
-        <timestamp>.json    # reindex history checkpoints
+```bash
+surreal start --user root --pass root --bind 127.0.0.1:8000 file:./data/surreal.db
 ```
 
-## Surreal schema (v1 planned)
-
-- `cache` — investigation case set
-- `document` — uploaded file metadata
-- `chunk` — extracted text chunks for retrieval
-- `entity` — normalized people/org/phone/email/account references
-- `relation` — links between entities/documents/chunks
-- `event` — temporal/financial/communication events
+> If your `surreal` binary is in `~/.local/bin/surreal`, use that full path.
 
 ---
 
-## Local run (target)
+## Run
 
 ```bash
 npm install
 npm start
 ```
 
-Then open:
-
-- `http://localhost:3000`
+Open: `http://localhost:3000`
 
 ---
 
-## Configuration (planned)
+## Environment variables
 
-Environment variables:
-
-- `PORT` (default `3000`)
-- `SURREAL_URL` (default local)
-- `SURREAL_NS`
-- `SURREAL_DB`
-- `SURREAL_USER`
-- `SURREAL_PASS`
-- `OPENROUTER_BASE_URL` (default `https://openrouter.ai/api/v1`)
-
-Note: OpenRouter API key will be user-entered in UI and stored in local browser storage by default for convenience.
+```bash
+PORT=3000
+SURREAL_URL=ws://127.0.0.1:8000/rpc
+SURREAL_NS=surreal_investigate
+SURREAL_DB=main
+SURREAL_USER=root
+SURREAL_PASS=root
+```
 
 ---
 
-## Query modes
+## E2E test flow (manual)
 
-### 1) Surreal-only (no AI)
-
-- Runs direct retrieval + graph traversal + deterministic summaries.
-- Best for:
-  - low cost
-  - strict reproducibility
-  - quick evidence lookup
-
-### 2) Surreal + AI
-
-- Retrieves candidates from Surreal first.
-- Sends grounded evidence to model for synthesis.
-- Returns answer + source trace.
+1. Create cache (e.g. `harbor-case`)
+2. Click **Load Sample File**
+3. Click **Create / Refresh Index**
+4. Confirm UI shows `Ready for questions ✅`
+5. Ask in **Surreal only** mode:
+   - `who moved money and through which entities?`
+6. (Optional) set OpenRouter key/model and click **Ping**
+7. Switch to **Surreal + AI** mode and ask same question.
 
 ---
 
-## Deployment notes (planned)
+## API endpoints
 
-### Render (primary deployment target)
-
-- Native fit for long-running Node server + background indexing.
-
-### Netlify (secondary)
-
-- Possible via Functions/adapter path, but not ideal for heavy ingest/index workloads.
-- README will include exact constraints and adapter setup if needed.
-
----
-
-## Testing strategy (planned)
-
-- Unit tests: parsers/chunking/entity normalization
-- Integration tests: upload → extract → index → query pipeline
-- Smoke tests: startup + OpenRouter health check + Surreal connectivity
-- Fixture-based tests for `.txt`, `.csv`, `.eml`, `.docx`, `.xlsx`, `.pdf`
+- `GET /api/health`
+- `GET /api/config`
+- `GET /api/caches`
+- `POST /api/caches`
+- `POST /api/upload`
+- `POST /api/index/:cacheId`
+- `POST /api/query/:cacheId`
+- `POST /api/openrouter/ping`
 
 ---
 
-## Near-term roadmap
+## Project structure
 
-1. Scaffold app (`server/`, `public/`, `lib/`, `workers/`)
-2. Build upload queue + file inspector UI
-3. Implement extractor adapters (start with txt/csv/json/md)
-4. Wire Surreal writes and index manifests
-5. Add query console + mode toggle + readiness state
-6. Add OpenRouter key/model panel + health dot
+```txt
+surreal-investigate/
+  lib/
+    surreal.js
+    extract.js
+  fixtures/
+    sample-case-500w.txt
+  public/
+    index.html
+    app.js
+    styles.css
+  uploads/
+  indexes/
+  data/
+  server.js
+```
 
 ---
 
-## License
+## Next planned upgrades
 
-TBD
+- Add `.docx .xlsx .pdf` extraction adapters
+- Better entity/relation extraction into dedicated tables
+- Query timeline visualization and relationship map
+- Background job queue for very large imports
+- Render deploy profile and health checks

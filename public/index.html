@@ -9,7 +9,7 @@
 <body>
   <main>
     <h1>Surreal Investigate</h1>
-    <p class="muted">Upload files, group into caches, and prepare indexing workflows.</p>
+    <p class="muted">Build local investigation caches, index with SurrealDB, then ask questions.</p>
 
     <section class="card">
       <h2>OpenRouter</h2>
@@ -17,6 +17,7 @@
         <input id="or-key" placeholder="OpenRouter API key" type="password" />
         <input id="or-model" placeholder="Model (e.g. google/gemini-2.0-flash-001)" />
         <button id="save-or">Save</button>
+        <button id="ping-or">Ping</button>
       </div>
       <p>Status: <span id="or-dot" class="dot red"></span> <span id="or-status">Not checked</span></p>
     </section>
@@ -36,11 +37,34 @@
         <select id="cache-select"></select>
         <input id="file-input" type="file" multiple />
         <button id="upload-btn">Upload</button>
+        <button id="load-sample">Load Sample File</button>
       </div>
       <table>
         <thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Supported</th></tr></thead>
         <tbody id="file-preview"></tbody>
       </table>
+    </section>
+
+    <section class="card">
+      <h2>Index</h2>
+      <div class="row">
+        <button id="index-btn">Create / Refresh Index</button>
+      </div>
+      <p><strong id="ready-state">Not ready for questions</strong></p>
+      <pre id="index-log" class="log"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Ask Questions</h2>
+      <div class="row">
+        <select id="query-mode">
+          <option value="surreal">Surreal only</option>
+          <option value="ai">Surreal + AI</option>
+        </select>
+        <input id="question" placeholder="Ask about parties, money movement, relationships..." />
+        <button id="ask-btn">Ask</button>
+      </div>
+      <pre id="answer" class="log"></pre>
     </section>
   </main>
   <script src="/app.js"></script>
