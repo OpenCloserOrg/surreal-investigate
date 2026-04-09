@@ -1,7 +1,7 @@
 # Surreal Investigate
 
 <p align="center">
-  <img src="images/Surreal-Investigate.png" alt="Surreal Investigate logo" width="220" />
+  <img src="images/Surreal-Investigate.jpg" alt="Surreal Investigate logo" width="220" />
 </p>
 
 Local-first **SurrealDB + Node.js** investigation app.
