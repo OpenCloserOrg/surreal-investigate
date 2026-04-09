@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { withSurreal, ensureSchema, surrealConfig } from './lib/surreal.js';
 import { extractTextFromFile, chunkText, summarizeText, isSupported } from './lib/extract.js';
+import { analyzeChunk, buildCooccurrenceRelations, tokenize } from './lib/investigate.js';
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -189,14 +190,21 @@ app.post('/api/index/:cacheId', async (req, res) => {
     const result = await withTimeout(withSurreal(async (db) => {
       await ensureSchema(db);
       log('Schema ensured.');
-      await db.query('DELETE document WHERE cacheId = $cacheId; DELETE chunk WHERE cacheId = $cacheId;', { cacheId });
-      log('Previous index rows for cache cleared.');
+      await db.query(
+        'DELETE document WHERE cacheId = $cacheId; DELETE chunk WHERE cacheId = $cacheId; DELETE entity WHERE cacheId = $cacheId; DELETE event WHERE cacheId = $cacheId; DELETE relation WHERE cacheId = $cacheId; DELETE anomaly WHERE cacheId = $cacheId;',
+        { cacheId }
+      );
+      log('Previous index rows for cache cleared (documents, chunks, entities, events, relations, anomalies).');
 
       const allFiles = cache.files || [];
       const files = allFiles.filter((f) => f.absPath && fs.existsSync(f.absPath));
       log(`Cache has ${allFiles.length} file records; ${files.length} files currently readable from disk.`);
       let documentCount = 0;
       let chunkCount = 0;
+      let entityCount = 0;
+      let eventCount = 0;
+      let relationCount = 0;
+      let anomalyCount = 0;
 
       for (const file of files) {
         const extracted = await extractTextFromFile(file.absPath, file.originalName);
@@ -242,11 +250,30 @@ app.post('/api/index/:cacheId', async (req, res) => {
             }
           );
           chunkCount += 1;
+
+          const analysis = analyzeChunk(text);
+          for (const entity of analysis.entities) {
+            await db.query('INSERT INTO entity $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...entity } });
+            entityCount += 1;
+          }
+          for (const ev of analysis.events) {
+            await db.query('INSERT INTO event $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...ev } });
+            eventCount += 1;
+          }
+          for (const an of analysis.anomalies) {
+            await db.query('INSERT INTO anomaly $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...an } });
+            anomalyCount += 1;
+          }
+          const relations = buildCooccurrenceRelations(analysis.entities);
+          for (const rel of relations) {
+            await db.query('INSERT INTO relation $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...rel } });
+            relationCount += 1;
+          }
         }
-        log(`Indexed ${file.originalName}: ${summary.wordCount} words, ${chunks.length} chunks (method: ${extracted.method || 'unknown'}).`);
+        log(`Indexed ${file.originalName}: ${summary.wordCount} words, ${chunks.length} chunks, entities=${entityCount}, events=${eventCount}, anomalies=${anomalyCount} (method: ${extracted.method || 'unknown'}).`);
       }
 
-      return { documentCount, chunkCount };
+      return { documentCount, chunkCount, entityCount, eventCount, relationCount, anomalyCount };
     }), 120000, 'index job');
 
     const manifest = {
@@ -258,7 +285,8 @@ app.post('/api/index/:cacheId', async (req, res) => {
         '1) Extract readable text from each file.',
         '2) Create document metadata rows (filename, size, word counts).',
         '3) Split text into chunks and store chunk rows for retrieval.',
-        '4) Query scans chunk text for search tokens and ranks by token overlap.'
+        '4) Derive structured intelligence per chunk: entities, events, anomalies, and co-occurrence relations.',
+        '5) Query combines lexical chunk retrieval with structured tables for investigative patterning.'
       ],
       stats: result,
       logs
@@ -295,45 +323,79 @@ app.post('/api/query/:cacheId', async (req, res) => {
   try {
     logServer('query:start', { cacheId, mode, chatId, queryStrategy });
     await withTimeout(withSurreal(async (db) => db.query('RETURN 1;')), 5000, 'surreal precheck');
-    const chunks = await withTimeout(withSurreal(async (db) => {
-      const rows = await db.query(
-        `SELECT fileId, filename, chunkIndex, text
-         FROM chunk
-         WHERE cacheId = $cacheId
-         LIMIT 2000;`,
-        { cacheId }
-      );
-      const all = Array.isArray(rows?.[0]) ? rows[0] : (rows?.[0]?.result || []);
-      const tokens = String(question || '')
-        .toLowerCase()
-        .split(/[^a-z0-9]+/)
-        .filter((t) => t && t.length >= 3);
-      const score = (txt='') => {
+    const retrieval = await withTimeout(withSurreal(async (db) => {
+      const [chunkRows, entityRows, eventRows, anomalyRows, relationRows] = await Promise.all([
+        db.query(`SELECT fileId, filename, chunkIndex, text FROM chunk WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
+        db.query(`SELECT type, value, normalized, filename, chunkIndex, confidence FROM entity WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
+        db.query(`SELECT type, amount, currency, rawAmount, filename, chunkIndex, confidence FROM event WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
+        db.query(`SELECT type, severity, rationale, filename, chunkIndex FROM anomaly WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId }),
+        db.query(`SELECT type, sourceType, sourceValue, targetType, targetValue, filename, chunkIndex FROM relation WHERE cacheId = $cacheId LIMIT 3000;`, { cacheId })
+      ]);
+
+      const rowsToList = (rows) => (Array.isArray(rows?.[0]) ? rows[0] : (rows?.[0]?.result || []));
+      const allChunks = rowsToList(chunkRows);
+      const allEntities = rowsToList(entityRows);
+      const allEvents = rowsToList(eventRows);
+      const allAnomalies = rowsToList(anomalyRows);
+      const allRelations = rowsToList(relationRows);
+
+      const tokens = tokenize(question);
+      const scoreText = (txt='') => {
         const v = String(txt || '').toLowerCase();
         let s = 0;
         for (const t of tokens) if (v.includes(t)) s += 1;
         return s;
       };
-      return all
-        .map((c) => ({ ...c, score: score(c.text) }))
+
+      const chunks = allChunks
+        .map((c) => ({ ...c, score: scoreText(c.text) }))
         .filter((c) => c.score > 0)
         .sort((a, b) => b.score - a.score)
         .slice(0, 8);
-    }), 15000, 'query');
+
+      const byTokenMatch = (obj) => {
+        const v = JSON.stringify(obj).toLowerCase();
+        let s = 0;
+        for (const t of tokens) if (v.includes(t)) s += 1;
+        return s;
+      };
+
+      const entities = allEntities.map((e) => ({ ...e, score: byTokenMatch(e) })).filter((e) => e.score > 0).sort((a, b) => b.score - a.score).slice(0, 12);
+      const events = allEvents.map((e) => ({ ...e, score: byTokenMatch(e) })).filter((e) => e.score > 0).sort((a, b) => b.score - a.score).slice(0, 12);
+      const anomalies = allAnomalies.map((a) => ({ ...a, score: byTokenMatch(a) })).filter((a) => a.score > 0).sort((a, b) => b.score - a.score).slice(0, 10);
+      const relations = allRelations.map((r) => ({ ...r, score: byTokenMatch(r) })).filter((r) => r.score > 0).sort((a, b) => b.score - a.score).slice(0, 10);
+
+      return { chunks, entities, events, anomalies, relations, tokenCount: tokens.length };
+    }), 20000, 'query');
+
+    const chunks = retrieval.chunks;
 
     if (mode === 'surreal') {
-      const answer = chunks.length
-        ? `Found ${chunks.length} relevant chunk matches in Surreal index.`
-        : 'No matching chunks found in Surreal index.';
+      const summary = [
+        `Chunks: ${chunks.length}`,
+        `Entities: ${retrieval.entities.length}`,
+        `Events: ${retrieval.events.length}`,
+        `Anomalies: ${retrieval.anomalies.length}`,
+        `Relations: ${retrieval.relations.length}`
+      ].join(' | ');
+      const answer = chunks.length || retrieval.entities.length || retrieval.events.length || retrieval.anomalies.length
+        ? `Found structured matches. ${summary}`
+        : 'No matching chunks or structured findings found in Surreal index.';
       appendChatLog(cacheId, chatId, { role: 'user', mode, queryStrategy, content: question });
       appendChatLog(cacheId, chatId, { role: 'assistant', mode, queryStrategy, content: answer, evidenceCount: chunks.length });
-      logServer('query:done', { cacheId, mode, chatId, evidenceCount: chunks.length });
+      logServer('query:done', { cacheId, mode, chatId, evidenceCount: chunks.length, structured: summary });
       return res.json({
         ok: true,
         mode,
         chatId,
         answer,
-        evidence: chunks
+        evidence: chunks,
+        structured: {
+          entities: retrieval.entities,
+          events: retrieval.events,
+          anomalies: retrieval.anomalies,
+          relations: retrieval.relations
+        }
       });
     }
 
@@ -343,15 +405,27 @@ app.post('/api/query/:cacheId', async (req, res) => {
 
     const prior = readChatLog(cacheId, chatId).messages || [];
     const priorTurns = prior.slice(-8).map((m) => `${m.role?.toUpperCase?.() || 'MSG'}: ${String(m.content || '').slice(0, 220)}`).join('\n');
-    const prompt = `You are an investigation assistant. Answer using only supplied evidence snippets.
+    const prompt = `You are an investigation assistant. Answer using only supplied evidence snippets and structured findings.
 Query strategy: ${queryStrategy}${queryStrategyNotes ? ` (${queryStrategyNotes})` : ''}
 Prior context:
 ${priorTurns || 'none'}
 Question: ${question}
 
-Evidence:
-${chunks.map((c, i) => `#${i + 1} ${c.filename} [chunk ${c.chunkIndex}]
-${c.text.slice(0, 1200)}`).join('\n\n')}`;
+Chunk Evidence:
+${chunks.map((c, i) => `#${i + 1} ${c.filename} [chunk ${c.chunkIndex}] score=${c.score}
+${c.text.slice(0, 1200)}`).join('\n\n')}
+
+Structured Findings:
+Entities: ${JSON.stringify(retrieval.entities.slice(0, 12))}
+Events: ${JSON.stringify(retrieval.events.slice(0, 12))}
+Anomalies: ${JSON.stringify(retrieval.anomalies.slice(0, 10))}
+Relations: ${JSON.stringify(retrieval.relations.slice(0, 10))}
+
+Return:
+1) direct answer
+2) key links/patterns
+3) possible vulnerabilities or mismatches
+4) confidence (low/medium/high) with why.`;
     const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -364,7 +438,19 @@ ${c.text.slice(0, 1200)}`).join('\n\n')}`;
     appendChatLog(cacheId, chatId, { role: 'assistant', mode, queryStrategy, content: answer, evidenceCount: chunks.length });
     logServer('query:done', { cacheId, mode, chatId, evidenceCount: chunks.length });
 
-    return res.json({ ok: true, mode, chatId, answer, evidence: chunks });
+    return res.json({
+      ok: true,
+      mode,
+      chatId,
+      answer,
+      evidence: chunks,
+      structured: {
+        entities: retrieval.entities,
+        events: retrieval.events,
+        anomalies: retrieval.anomalies,
+        relations: retrieval.relations
+      }
+    });
   } catch (error) {
     logServer('query:error', { cacheId, mode, chatId, error: error.message });
     return res.status(500).json({ ok: false, error: error.message || 'query failed' });

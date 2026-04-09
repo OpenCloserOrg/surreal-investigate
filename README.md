@@ -34,6 +34,25 @@ When fully running, you can:
   - `indexes/<cache-id>/snapshots/<timestamp>.json`
 - Sample fixture for flow testing: `fixtures/sample-case-500w.txt`
 
+## Current working investigation strategy (default)
+
+This project now uses an **investigation-first indexing strategy** by default:
+
+1. Extract text from each file
+2. Store document metadata
+3. Chunk document text for retrieval
+4. Derive structured investigation signals per chunk:
+   - **entities** (people, orgs, emails)
+   - **events** (e.g., money/transfer-style amounts)
+   - **anomalies** (concealment, threshold splitting, integrity mismatch indicators)
+   - **relations** (co-occurrence links between entities)
+5. At query time, combine:
+   - chunk retrieval
+   - structured table retrieval
+   - optional AI synthesis grounded in Surreal evidence
+
+This is the current baseline strategy and will be iterated over time (better extraction quality, richer graph logic, stronger anomaly detection).
+
 ---
 
 ## Prerequisites
@@ -135,6 +154,7 @@ surreal-investigate/
   lib/
     surreal.js
     extract.js
+    investigate.js
   fixtures/
     sample-case-500w.txt
   public/
@@ -144,6 +164,7 @@ surreal-investigate/
   uploads/
   indexes/
   data/
+  chat-logs/
   server.js
 ```
 
