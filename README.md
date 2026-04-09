@@ -20,6 +20,8 @@ When fully running, you can:
 - Unknown extensions: best-effort raw text fallback extraction
 - Surreal indexing endpoint
 - Index logs + readiness state
+- Real index progress endpoint with ETA estimates (`/api/index-progress/:cacheId`)
+- Load Existing Index path to reuse prior index without re-scanning files
 - Query endpoint with two modes:
   - Surreal search mode (term-driven retrieval)
   - Surreal retrieval + OpenRouter synthesis

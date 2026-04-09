@@ -200,6 +200,7 @@ app.post('/api/upload', upload.array('files', 400), (req, res) => {
 
 app.post('/api/index/:cacheId', async (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
+  const forceReindex = Boolean(req.body?.forceReindex);
   const indexStrategy = String(req.body?.indexStrategy || '').trim() || 'balanced';
   const indexStrategyNotes = String(req.body?.indexStrategyNotes || '').trim();
   const data = readCaches();
@@ -207,6 +208,21 @@ app.post('/api/index/:cacheId', async (req, res) => {
   if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
   const logs = [];
   const log = (m) => logs.push({ at: new Date().toISOString(), message: m });
+
+  if (!forceReindex && cache.readyForQuestions && cache.indexStats) {
+    const manifestPath = path.join(INDEXES_DIR, cacheId, 'manifest.json');
+    const manifest = fs.existsSync(manifestPath)
+      ? JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+      : {
+          cacheId,
+          indexedAt: cache.updatedAt || new Date().toISOString(),
+          status: 'ready',
+          strategy: { name: indexStrategy, notes: indexStrategyNotes },
+          stats: cache.indexStats,
+          logs: [{ at: new Date().toISOString(), message: 'Loaded existing index without re-scanning files.' }]
+        };
+    return res.json({ ok: true, cache, manifest, reusedExisting: true });
+  }
 
   try {
     const preFiles = (cache.files || []).filter((f) => f.absPath && fs.existsSync(f.absPath));
@@ -334,6 +350,24 @@ app.post('/api/index/:cacheId', async (req, res) => {
       return { documentCount, chunkCount, entityCount, eventCount, activityCount, intentCount, relationCount, anomalyCount };
     }), 120000, 'index job');
 
+    const summaryRows = await withTimeout(withSurreal(async (db) => {
+      const [ent, ev, an] = await Promise.all([
+        db.query('SELECT value FROM entity WHERE cacheId = $cacheId LIMIT 5;', { cacheId }),
+        db.query('SELECT rawAmount, currency FROM event WHERE cacheId = $cacheId LIMIT 5;', { cacheId }),
+        db.query('SELECT type FROM anomaly WHERE cacheId = $cacheId LIMIT 5;', { cacheId })
+      ]);
+      const rowsToList = (rows) => (Array.isArray(rows?.[0]) ? rows[0] : (rows?.[0]?.result || []));
+      return { entities: rowsToList(ent), events: rowsToList(ev), anomalies: rowsToList(an) };
+    }), 8000, 'post-index-summary');
+
+    const quickSummary = [
+      `Indexed ${result.documentCount} document(s) into ${result.chunkCount} chunk(s).`,
+      summaryRows.entities.length ? `Top entities: ${summaryRows.entities.map((e) => e.value).filter(Boolean).slice(0, 3).join(', ')}.` : 'No strong named entities extracted yet.',
+      (summaryRows.events.length || summaryRows.anomalies.length)
+        ? `Signals: ${summaryRows.events.length} event(s), ${summaryRows.anomalies.length} anomaly flag(s).`
+        : 'No event/anomaly signals extracted yet.'
+    ].join(' ');
+
     const manifest = {
       cacheId,
       indexedAt: new Date().toISOString(),
@@ -347,6 +381,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
         '5) Query combines lexical chunk retrieval with structured tables for investigative patterning.'
       ],
       stats: result,
+      summary: quickSummary,
       logs
     };
     writeManifest(cacheId, manifest);
@@ -355,6 +390,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
     cache.readyForQuestions = true;
     cache.updatedAt = new Date().toISOString();
     cache.indexStats = result;
+    cache.lastSummary = quickSummary;
     writeCaches(data);
     const doneJob = indexJobs.get(cacheId);
     if (doneJob) {
@@ -598,10 +634,10 @@ app.post('/api/suggest-questions/:cacheId', async (req, res) => {
   try {
     const retrieval = await withTimeout(withSurreal(async (db) => {
       const [entityRows, eventRows, activityRows, anomalyRows] = await Promise.all([
-        db.query(`SELECT * FROM entity WHERE cacheId = $cacheId LIMIT 200;`, { cacheId }),
-        db.query(`SELECT * FROM event WHERE cacheId = $cacheId LIMIT 200;`, { cacheId }),
-        db.query(`SELECT * FROM activity WHERE cacheId = $cacheId LIMIT 200;`, { cacheId }),
-        db.query(`SELECT * FROM anomaly WHERE cacheId = $cacheId LIMIT 200;`, { cacheId })
+        db.query(`SELECT * FROM entity WHERE cacheId = $cacheId LIMIT 80;`, { cacheId }),
+        db.query(`SELECT * FROM event WHERE cacheId = $cacheId LIMIT 80;`, { cacheId }),
+        db.query(`SELECT * FROM activity WHERE cacheId = $cacheId LIMIT 80;`, { cacheId }),
+        db.query(`SELECT * FROM anomaly WHERE cacheId = $cacheId LIMIT 80;`, { cacheId })
       ]);
       const rowsToList = (rows) => (Array.isArray(rows?.[0]) ? rows[0] : (rows?.[0]?.result || []));
       return {

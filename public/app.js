@@ -8,6 +8,7 @@ function bytes(n=0){ if(n<1024) return `${n} B`; if(n<1048576) return `${(n/1024
 function selectedCacheId(){ return $('cache-select').value; }
 function setProgress(v=0){ $('index-progress').style.width = `${Math.max(0, Math.min(100, v))}%`; }
 function relTime(iso=''){ const d=new Date(iso); const s=Math.floor((Date.now()-d.getTime())/1000); if(!iso||Number.isNaN(d.getTime())) return ''; if(s<60) return `${s}s ago`; if(s<3600) return `${Math.floor(s/60)}m ago`; if(s<86400) return `${Math.floor(s/3600)}h ago`; return `${Math.floor(s/86400)}d ago`; }
+function scrollToSection(id){ const el=$(id); if(el) el.scrollIntoView({ behavior:'smooth', block:'start' }); }
 
 function loadOpenRouter(){ $('or-key').value=localStorage.getItem('openrouter.key')||''; $('or-model').value=localStorage.getItem('openrouter.model')||'openai/gpt-4o-mini'; }
 function updateQuestionPlaceholder(){ $('question').placeholder = $('query-mode').value === 'surreal' ? 'Search term(s)' : 'Ask a follow-up question'; }
@@ -59,12 +60,27 @@ async function fetchChats(){
 async function fetchCaches(){
   const prior = selectedCacheId();
   const r=await fetch('/api/caches'); const j=await r.json(); const list=j.caches||[];
-  $('cache-list').innerHTML=list.map(c=>`<li><strong>${c.label}</strong> <span class="muted">(${c.id}) · ${c.files?.length||0} files · ${c.readyForQuestions?'ready':'not-ready'}</span></li>`).join('') || '<li class="muted">No caches yet</li>';
+  $('cache-list').innerHTML=list.map(c=>`<li><button class="sugg-btn cache-jump" data-cache-id="${c.id}"><strong>${c.label}</strong> <span class="muted">(${c.id}) · ${c.files?.length||0} files · ${c.readyForQuestions?'ready':'not-ready'}</span></button></li>`).join('') || '<li class="muted">No caches yet</li>';
   $('cache-select').innerHTML=list.map(c=>`<option value="${c.id}">${c.label}</option>`).join('');
   if (prior && list.some(c=>c.id===prior)) $('cache-select').value = prior;
   const active=list.find(c=>c.id===selectedCacheId()) || list[0];
   $('active-cache-label').textContent = active ? `${active.label} (${active.id})` : 'None';
   $('ready-state').textContent=active?.readyForQuestions ? 'Ready for questions ✅' : 'Not ready for questions';
+
+  document.querySelectorAll('.cache-jump').forEach((btn) => {
+    btn.onclick = async () => {
+      const cid = btn.getAttribute('data-cache-id');
+      if (!cid) return;
+      $('cache-select').value = cid;
+      const selected = list.find((c) => c.id === cid);
+      $('active-cache-label').textContent = selected ? `${selected.label} (${selected.id})` : 'None';
+      await fetchChats();
+      if (!selected || !(selected.files || []).length) scrollToSection('section-upload');
+      else if (!selected.readyForQuestions) scrollToSection('section-index');
+      else scrollToSection('section-ask');
+    };
+  });
+
   await fetchChats();
 }
 
@@ -92,6 +108,18 @@ $('load-sample').onclick=async()=>{ const cacheId=selectedCacheId(); if(!cacheId
 async function checkSurreal(){ const r=await fetch('/api/surreal/health'); const j=await r.json(); if(r.ok&&j.ok){ $('surreal-dot').className='dot green'; $('surreal-status').textContent='Reachable'; return true; } $('surreal-dot').className='dot red'; $('surreal-status').textContent=`Unreachable: ${j.error||'unknown'}`; return false; }
 
 $('suggest-strategy').onclick = async ()=>{ const cacheId = selectedCacheId(); if(!cacheId) return; $('index-log').textContent = 'Requesting strategy suggestion...'; const mode = $('or-key').value.trim() ? 'ai' : 'heuristic'; const r = await fetch(`/api/index/strategy-suggest/${cacheId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ mode, openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() }) }); const j = await r.json(); if (!r.ok || !j.ok) { $('index-log').textContent = `Strategy suggestion failed: ${j.error||'unknown'}`; return; } $('index-strategy-notes').value = `${j.strategy || ''} — ${j.rationale || ''}`.trim(); $('index-log').textContent = `Suggested strategy (${j.source}):\n- ${j.strategy}\n- ${j.rationale}\nFocus: ${(j.focus||[]).join(', ')}`; };
+
+$('load-existing-index').onclick = async ()=>{
+  const cacheId=selectedCacheId(); if(!cacheId) return;
+  const r=await fetch(`/api/index/${cacheId}`,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ forceReindex: false }) });
+  const j=await r.json();
+  if(!r.ok){ $('index-log').textContent=`Load existing index failed: ${j.error||'unknown'}`; return; }
+  setProgress(100);
+  $('index-estimate').textContent='Existing index loaded instantly.';
+  $('index-log').textContent=(j.manifest.logs||[]).map(x=>`- ${x.message}`).join('\n') + `${j.manifest.summary ? `\n\nSummary:\n${j.manifest.summary}` : ''}`;
+  await fetchCaches();
+  scrollToSection('section-ask');
+};
 
 $('index-btn').onclick=async()=>{
   const cacheId=selectedCacheId(); if(!cacheId) return;
@@ -129,7 +157,7 @@ $('index-btn').onclick=async()=>{
   if(!r.ok){ setProgress(0); $('index-estimate').textContent = 'Index failed.'; $('index-log').textContent=(j.logs||[]).map(x=>`- ${x.message}`).join('\n') + `\nERROR: ${j.error}`; await fetchCaches(); return; }
   setProgress(100);
   $('index-estimate').textContent = 'Index complete.';
-  $('index-log').textContent=(j.manifest.logs||[]).map(x=>`- ${x.message}`).join('\n') + `\n\nHow indexing works:\n${(j.manifest.indexingExplanation||[]).map(s=>`- ${s}`).join('\n')}\n\nDONE: docs=${j.manifest.stats.documentCount} chunks=${j.manifest.stats.chunkCount} entities=${j.manifest.stats.entityCount||0} events=${j.manifest.stats.eventCount||0} activities=${j.manifest.stats.activityCount||0} intents=${j.manifest.stats.intentCount||0}`;
+  $('index-log').textContent=(j.manifest.logs||[]).map(x=>`- ${x.message}`).join('\n') + `${j.manifest.summary ? `\n\nSummary:\n${j.manifest.summary}` : ''}` + `\n\nHow indexing works:\n${(j.manifest.indexingExplanation||[]).map(s=>`- ${s}`).join('\n')}\n\nDONE: docs=${j.manifest.stats.documentCount} chunks=${j.manifest.stats.chunkCount} entities=${j.manifest.stats.entityCount||0} events=${j.manifest.stats.eventCount||0} activities=${j.manifest.stats.activityCount||0} intents=${j.manifest.stats.intentCount||0}${j.reusedExisting ? '\n(Loaded existing index; no re-scan performed.)' : ''}`;
   await fetchCaches();
 };
 
@@ -140,7 +168,7 @@ $('suggest-btn').onclick = async ()=>{
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
       chatId: activeChatId,
-      mode: $('or-key').value.trim() ? 'ai' : 'heuristic',
+      mode: 'heuristic',
       openRouterKey: $('or-key').value.trim(),
       model: $('or-model').value.trim()
     })
@@ -176,7 +204,7 @@ $('ask-btn').onclick=async()=>{
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
         chatId: activeChatId,
-        mode: $('or-key').value.trim() ? 'ai' : 'heuristic',
+        mode: 'heuristic',
         openRouterKey: $('or-key').value.trim(),
         model: $('or-model').value.trim()
       })

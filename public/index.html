@@ -22,7 +22,7 @@
       <p>Status: <span id="or-dot" class="dot red"></span> <span id="or-status">Not checked</span></p>
     </section>
 
-    <section class="card">
+    <section class="card" id="section-caches">
       <h2>Caches</h2>
       <div class="row">
         <input id="cache-label" placeholder="New cache label" />
@@ -31,7 +31,7 @@
       <ul id="cache-list"></ul>
     </section>
 
-    <section class="card">
+    <section class="card" id="section-upload">
       <h2>Upload</h2>
       <div class="row">
         <select id="cache-select"></select>
@@ -46,7 +46,7 @@
       </table>
     </section>
 
-    <section class="card">
+    <section class="card" id="section-index">
       <h2>Index</h2>
       <div class="row">
         <select id="index-strategy">
@@ -58,6 +58,7 @@
         </select>
         <input id="index-strategy-notes" placeholder="Custom indexing strategy notes (optional)" />
         <button id="suggest-strategy">Suggest Strategy</button>
+        <button id="load-existing-index">Load Existing Index</button>
         <button id="index-btn">Create / Refresh Index</button>
       </div>
       <div class="progress-wrap"><div id="index-progress" class="progress"></div></div>
@@ -67,7 +68,7 @@
       <pre id="index-log" class="log"></pre>
     </section>
 
-    <section class="card">
+    <section class="card" id="section-ask">
       <h2>Ask Questions</h2>
       <p class="muted">Active cache: <strong id="active-cache-label">None</strong></p>
       <div class="row">
