@@ -21,8 +21,12 @@ When fully running, you can:
 - Surreal indexing endpoint
 - Index logs + readiness state
 - Query endpoint with two modes:
-  - Surreal keyword/BM25 retrieval
+  - Surreal search mode (term-driven retrieval)
   - Surreal retrieval + OpenRouter synthesis
+- Query strategy controls (preset + custom notes)
+- Index strategy controls (preset + custom notes) + AI/heuristic suggestion helper
+- Chat persistence per cache in `chat-logs/<cache-id>/<chat-id>.json`
+- Continue conversations with context from prior turns in each chat
 - OpenRouter key/model local storage
 - OpenRouter ping health check (green/red)
 - Manifest persistence:
@@ -113,8 +117,12 @@ SURREAL_PASS=root
 - `GET /api/config`
 - `GET /api/caches`
 - `POST /api/caches`
+- `GET /api/chats/:cacheId`
+- `POST /api/chats/:cacheId`
+- `GET /api/chats/:cacheId/:chatId`
 - `POST /api/upload`
 - `POST /api/index/:cacheId`
+- `POST /api/index/strategy-suggest/:cacheId`
 - `POST /api/query/:cacheId`
 - `POST /api/openrouter/ping`
 

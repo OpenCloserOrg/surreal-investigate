@@ -49,8 +49,18 @@
     <section class="card">
       <h2>Index</h2>
       <div class="row">
+        <select id="index-strategy">
+          <option value="balanced">Balanced</option>
+          <option value="entities-first">Entities first</option>
+          <option value="timeline-first">Timeline first</option>
+          <option value="money-flow">Money-flow focused</option>
+          <option value="custom">Custom</option>
+        </select>
+        <input id="index-strategy-notes" placeholder="Custom indexing strategy notes (optional)" />
+        <button id="suggest-strategy">Suggest Strategy</button>
         <button id="index-btn">Create / Refresh Index</button>
       </div>
+      <div class="progress-wrap"><div id="index-progress" class="progress"></div></div>
       <p>SurrealDB: <span id="surreal-dot" class="dot red"></span> <span id="surreal-status">Not checked</span></p>
       <p><strong id="ready-state">Not ready for questions</strong></p>
       <pre id="index-log" class="log"></pre>
@@ -63,9 +73,25 @@
           <option value="surreal">Surreal only</option>
           <option value="ai">Surreal + AI</option>
         </select>
-        <input id="question" placeholder="Ask about parties, money movement, relationships..." />
-        <button id="ask-btn">Ask</button>
+        <select id="query-strategy">
+          <option value="balanced">Balanced</option>
+          <option value="broad-discovery">Broad discovery</option>
+          <option value="high-precision">High precision</option>
+          <option value="timeline">Timeline</option>
+          <option value="money-flow">Money flow</option>
+          <option value="custom">Custom</option>
+        </select>
+        <input id="query-strategy-notes" placeholder="Custom query strategy notes (optional)" />
       </div>
+      <div class="row">
+        <select id="chat-select"></select>
+        <button id="new-chat">New Chat</button>
+      </div>
+      <div class="row">
+        <input id="question" placeholder="Search term (Surreal mode) or question (Surreal+AI)" />
+        <button id="ask-btn">Run</button>
+      </div>
+      <p class="muted" id="query-status">Idle.</p>
       <pre id="answer" class="log"></pre>
     </section>
   </main>

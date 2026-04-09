@@ -12,9 +12,10 @@ const APP_DIR = path.join(ROOT, '.app');
 const UPLOADS_DIR = path.join(ROOT, 'uploads');
 const INDEXES_DIR = path.join(ROOT, 'indexes');
 const DATA_DIR = path.join(ROOT, 'data');
+const CHAT_LOGS_DIR = path.join(ROOT, 'chat-logs');
 const CACHES_JSON = path.join(APP_DIR, 'caches.json');
 
-for (const p of [APP_DIR, UPLOADS_DIR, INDEXES_DIR, DATA_DIR]) fs.mkdirSync(p, { recursive: true });
+for (const p of [APP_DIR, UPLOADS_DIR, INDEXES_DIR, DATA_DIR, CHAT_LOGS_DIR]) fs.mkdirSync(p, { recursive: true });
 if (!fs.existsSync(CACHES_JSON)) fs.writeFileSync(CACHES_JSON, JSON.stringify({ caches: [] }, null, 2));
 
 const storage = multer.diskStorage({
@@ -35,6 +36,41 @@ app.use(express.static(path.join(ROOT, 'public')));
 function readCaches() { try { return JSON.parse(fs.readFileSync(CACHES_JSON, 'utf8')); } catch { return { caches: [] }; } }
 function writeCaches(data) { fs.writeFileSync(CACHES_JSON, JSON.stringify(data, null, 2)); }
 function findCache(data, cacheId) { return (data.caches || []).find((c) => c.id === cacheId); }
+function logServer(step, payload = {}) { console.log(`[surreal-investigate] ${step}`, payload); }
+
+function chatLogPath(cacheId, chatId) {
+  const dir = path.join(CHAT_LOGS_DIR, cacheId);
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, `${chatId}.json`);
+}
+function readChatLog(cacheId, chatId) {
+  const p = chatLogPath(cacheId, chatId);
+  if (!fs.existsSync(p)) return { cacheId, chatId, createdAt: new Date().toISOString(), messages: [] };
+  try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return { cacheId, chatId, createdAt: new Date().toISOString(), messages: [] }; }
+}
+function appendChatLog(cacheId, chatId, entry) {
+  const data = readChatLog(cacheId, chatId);
+  data.updatedAt = new Date().toISOString();
+  data.messages.push({ at: new Date().toISOString(), ...entry });
+  fs.writeFileSync(chatLogPath(cacheId, chatId), JSON.stringify(data, null, 2));
+}
+function listChats(cacheId) {
+  const dir = path.join(CHAT_LOGS_DIR, cacheId);
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((n) => n.endsWith('.json'))
+    .map((n) => {
+      const p = path.join(dir, n);
+      const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+      return {
+        chatId: n.replace(/\.json$/, ''),
+        updatedAt: data.updatedAt || data.createdAt || '',
+        messageCount: Array.isArray(data.messages) ? data.messages.length : 0,
+        title: data.title || ''
+      };
+    })
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+}
 
 function writeManifest(cacheId, manifest) {
   const dir = path.join(INDEXES_DIR, cacheId);
@@ -68,6 +104,23 @@ app.get('/api/surreal/health', async (_req, res) => {
 app.get('/api/config', (_req, res) => res.json({ ok: true, surreal: surrealConfig }));
 
 app.get('/api/caches', (_req, res) => res.json({ ok: true, caches: readCaches().caches || [] }));
+app.get('/api/chats/:cacheId', (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  return res.json({ ok: true, chats: listChats(cacheId) });
+});
+app.post('/api/chats/:cacheId', (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const chatId = `chat-${Date.now()}`;
+  const title = String(req.body?.title || '').trim() || 'New investigation chat';
+  const p = chatLogPath(cacheId, chatId);
+  fs.writeFileSync(p, JSON.stringify({ cacheId, chatId, title, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), messages: [] }, null, 2));
+  return res.json({ ok: true, chatId, title });
+});
+app.get('/api/chats/:cacheId/:chatId', (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const chatId = String(req.params.chatId || '').trim();
+  return res.json({ ok: true, chat: readChatLog(cacheId, chatId) });
+});
 
 app.post('/api/caches', (req, res) => {
   const label = String(req.body?.label || '').trim();
@@ -91,6 +144,7 @@ app.post('/api/caches', (req, res) => {
 });
 
 app.post('/api/upload', upload.array('files', 400), (req, res) => {
+  logServer('upload:start', { cacheId: req.body?.cacheId, fileCount: (req.files || []).length });
   const cacheId = String(req.body?.cacheId || '').trim();
   if (!cacheId) return res.status(400).json({ ok: false, error: 'cacheId required' });
   const data = readCaches();
@@ -113,11 +167,14 @@ app.post('/api/upload', upload.array('files', 400), (req, res) => {
   cache.status = 'files_uploaded';
   cache.readyForQuestions = false;
   writeCaches(data);
+  logServer('upload:done', { cacheId, uploaded: files.length, totalInCache: cache.files.length });
   res.json({ ok: true, files, cache });
 });
 
 app.post('/api/index/:cacheId', async (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
+  const indexStrategy = String(req.body?.indexStrategy || '').trim() || 'balanced';
+  const indexStrategyNotes = String(req.body?.indexStrategyNotes || '').trim();
   const data = readCaches();
   const cache = findCache(data, cacheId);
   if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
@@ -125,6 +182,8 @@ app.post('/api/index/:cacheId', async (req, res) => {
   const log = (m) => logs.push({ at: new Date().toISOString(), message: m });
 
   try {
+    logServer('index:start', { cacheId, indexStrategy, indexStrategyNotes: indexStrategyNotes.slice(0, 180) });
+    log(`Index strategy: ${indexStrategy}${indexStrategyNotes ? ` (${indexStrategyNotes.slice(0, 120)})` : ''}`);
     log('Connecting to SurrealDB...');
     await withTimeout(withSurreal(async (db) => db.query('RETURN 1;')), 5000, 'surreal precheck');
     const result = await withTimeout(withSurreal(async (db) => {
@@ -194,6 +253,13 @@ app.post('/api/index/:cacheId', async (req, res) => {
       cacheId,
       indexedAt: new Date().toISOString(),
       status: 'ready',
+      strategy: { name: indexStrategy, notes: indexStrategyNotes },
+      indexingExplanation: [
+        '1) Extract readable text from each file.',
+        '2) Create document metadata rows (filename, size, word counts).',
+        '3) Split text into chunks and store chunk rows for retrieval.',
+        '4) Query scans chunk text for search tokens and ranks by token overlap.'
+      ],
       stats: result,
       logs
     };
@@ -204,6 +270,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
     cache.updatedAt = new Date().toISOString();
     cache.indexStats = result;
     writeCaches(data);
+    logServer('index:done', { cacheId, ...result });
 
     return res.json({ ok: true, cache, manifest });
   } catch (error) {
@@ -211,6 +278,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
     cache.readyForQuestions = false;
     cache.updatedAt = new Date().toISOString();
     writeCaches(data);
+    logServer('index:error', { cacheId, error: error.message });
     return res.status(500).json({ ok: false, error: error.message || 'index failed', logs });
   }
 });
@@ -219,9 +287,13 @@ app.post('/api/query/:cacheId', async (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
   const mode = String(req.body?.mode || 'surreal').toLowerCase();
   const question = String(req.body?.question || '').trim();
+  const queryStrategy = String(req.body?.queryStrategy || '').trim() || 'balanced';
+  const queryStrategyNotes = String(req.body?.queryStrategyNotes || '').trim();
+  const chatId = String(req.body?.chatId || '').trim() || `chat-${Date.now()}`;
   if (!question) return res.status(400).json({ ok: false, error: 'question required' });
 
   try {
+    logServer('query:start', { cacheId, mode, chatId, queryStrategy });
     await withTimeout(withSurreal(async (db) => db.query('RETURN 1;')), 5000, 'surreal precheck');
     const chunks = await withTimeout(withSurreal(async (db) => {
       const rows = await db.query(
@@ -250,12 +322,17 @@ app.post('/api/query/:cacheId', async (req, res) => {
     }), 15000, 'query');
 
     if (mode === 'surreal') {
+      const answer = chunks.length
+        ? `Found ${chunks.length} relevant chunk matches in Surreal index.`
+        : 'No matching chunks found in Surreal index.';
+      appendChatLog(cacheId, chatId, { role: 'user', mode, queryStrategy, content: question });
+      appendChatLog(cacheId, chatId, { role: 'assistant', mode, queryStrategy, content: answer, evidenceCount: chunks.length });
+      logServer('query:done', { cacheId, mode, chatId, evidenceCount: chunks.length });
       return res.json({
         ok: true,
         mode,
-        answer: chunks.length
-          ? `Found ${chunks.length} relevant chunk matches in Surreal index.`
-          : 'No matching chunks found in Surreal index.',
+        chatId,
+        answer,
         evidence: chunks
       });
     }
@@ -264,7 +341,17 @@ app.post('/api/query/:cacheId', async (req, res) => {
     const model = String(req.body?.model || '').trim() || 'openai/gpt-4o-mini';
     if (!apiKey) return res.status(400).json({ ok: false, error: 'OpenRouter key required for ai mode.' });
 
-    const prompt = `You are an investigation assistant. Answer using only supplied evidence snippets.\nQuestion: ${question}\n\nEvidence:\n${chunks.map((c, i) => `#${i + 1} ${c.filename} [chunk ${c.chunkIndex}]\n${c.text.slice(0, 1200)}`).join('\n\n')}`;
+    const prior = readChatLog(cacheId, chatId).messages || [];
+    const priorTurns = prior.slice(-8).map((m) => `${m.role?.toUpperCase?.() || 'MSG'}: ${String(m.content || '').slice(0, 220)}`).join('\n');
+    const prompt = `You are an investigation assistant. Answer using only supplied evidence snippets.
+Query strategy: ${queryStrategy}${queryStrategyNotes ? ` (${queryStrategyNotes})` : ''}
+Prior context:
+${priorTurns || 'none'}
+Question: ${question}
+
+Evidence:
+${chunks.map((c, i) => `#${i + 1} ${c.filename} [chunk ${c.chunkIndex}]
+${c.text.slice(0, 1200)}`).join('\n\n')}`;
     const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -273,9 +360,60 @@ app.post('/api/query/:cacheId', async (req, res) => {
     const j = await r.json();
     const answer = j?.choices?.[0]?.message?.content || 'No AI answer returned.';
 
-    return res.json({ ok: true, mode, answer, evidence: chunks });
+    appendChatLog(cacheId, chatId, { role: 'user', mode, queryStrategy, content: question });
+    appendChatLog(cacheId, chatId, { role: 'assistant', mode, queryStrategy, content: answer, evidenceCount: chunks.length });
+    logServer('query:done', { cacheId, mode, chatId, evidenceCount: chunks.length });
+
+    return res.json({ ok: true, mode, chatId, answer, evidence: chunks });
   } catch (error) {
+    logServer('query:error', { cacheId, mode, chatId, error: error.message });
     return res.status(500).json({ ok: false, error: error.message || 'query failed' });
+  }
+});
+
+app.post('/api/index/strategy-suggest/:cacheId', async (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const mode = String(req.body?.mode || 'heuristic').trim();
+  const data = readCaches();
+  const cache = findCache(data, cacheId);
+  if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
+
+  const files = (cache.files || []).slice(0, 8);
+  const extCounts = {};
+  for (const f of files) {
+    const ext = String((f.originalName || '').split('.').pop() || '').toLowerCase();
+    extCounts[ext] = (extCounts[ext] || 0) + 1;
+  }
+  const heuristic = {
+    strategy: 'entity-relationship-timeline',
+    rationale: `Detected ${files.length} sample files. Prioritize people/org extraction, money terms, and timeline events.`,
+    focus: ['people', 'organizations', 'money transfers', 'dates/timeline', 'communications metadata'],
+    extCounts
+  };
+
+  if (mode !== 'ai') return res.json({ ok: true, source: 'heuristic', ...heuristic });
+
+  const key = String(req.body?.openRouterKey || '').trim();
+  const model = String(req.body?.model || '').trim() || 'openai/gpt-4o-mini';
+  if (!key) return res.json({ ok: true, source: 'heuristic-no-key', ...heuristic });
+
+  try {
+    const prompt = `Suggest an indexing strategy for investigation data.
+Files:\n${files.map((f) => `- ${f.originalName} (${f.size} bytes)`).join('\n')}
+Return JSON with keys: strategy, rationale, focus(array).`;
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.2 })
+    });
+    const j = await r.json();
+    const raw = String(j?.choices?.[0]?.message?.content || '').trim();
+    let parsed = null;
+    try { parsed = JSON.parse(raw.replace(/^```json/i, '').replace(/```$/i, '').trim()); } catch {}
+    if (parsed?.strategy) return res.json({ ok: true, source: 'ai', ...parsed, extCounts });
+    return res.json({ ok: true, source: 'heuristic-fallback', ...heuristic, aiRaw: raw.slice(0, 600) });
+  } catch {
+    return res.json({ ok: true, source: 'heuristic-error-fallback', ...heuristic });
   }
 });
 
