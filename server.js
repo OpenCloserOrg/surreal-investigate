@@ -588,6 +588,70 @@ Return JSON with keys: strategy, rationale, focus(array).`;
   }
 });
 
+app.post('/api/suggest-questions/:cacheId', async (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const chatId = String(req.body?.chatId || '').trim();
+  const mode = String(req.body?.mode || 'heuristic');
+  const model = String(req.body?.model || '').trim() || 'openai/gpt-4o-mini';
+  const openRouterKey = String(req.body?.openRouterKey || '').trim();
+
+  try {
+    const retrieval = await withTimeout(withSurreal(async (db) => {
+      const [entityRows, eventRows, activityRows, anomalyRows] = await Promise.all([
+        db.query(`SELECT * FROM entity WHERE cacheId = $cacheId LIMIT 200;`, { cacheId }),
+        db.query(`SELECT * FROM event WHERE cacheId = $cacheId LIMIT 200;`, { cacheId }),
+        db.query(`SELECT * FROM activity WHERE cacheId = $cacheId LIMIT 200;`, { cacheId }),
+        db.query(`SELECT * FROM anomaly WHERE cacheId = $cacheId LIMIT 200;`, { cacheId })
+      ]);
+      const rowsToList = (rows) => (Array.isArray(rows?.[0]) ? rows[0] : (rows?.[0]?.result || []));
+      return {
+        entities: rowsToList(entityRows),
+        events: rowsToList(eventRows),
+        activities: rowsToList(activityRows),
+        anomalies: rowsToList(anomalyRows)
+      };
+    }), 10000, 'suggestions');
+
+    const names = retrieval.entities.filter((e) => e.type === 'person').slice(0, 4).map((e) => e.value);
+    const orgs = retrieval.entities.filter((e) => e.type === 'organization').slice(0, 4).map((e) => e.value);
+    const topAn = retrieval.anomalies.slice(0, 3).map((a) => a.type);
+    const suggestions = [
+      names.length >= 2 ? `Why did ${names[0]} communicate with ${names[1]}?` : null,
+      orgs.length ? `What role does ${orgs[0]} play across the dataset?` : null,
+      retrieval.events.length ? 'Which money flows look unusual or fragmented?' : null,
+      retrieval.activities.length ? 'What is the sequence of key activities over time?' : null,
+      topAn.length ? `What evidence supports potential ${topAn[0]} risk?` : null,
+      'What major gaps or unknowns remain in this dataset?'
+    ].filter(Boolean);
+
+    if (mode !== 'ai' || !openRouterKey) return res.json({ ok: true, source: 'heuristic', suggestions: suggestions.slice(0, 8) });
+
+    const chat = chatId ? readChatLog(cacheId, chatId) : { messages: [] };
+    const context = (chat.messages || []).slice(-6).map((m) => `${m.role}: ${String(m.content || '').slice(0, 180)}`).join('\n');
+    const prompt = `Generate 6 concise, high-value follow-up investigation questions.
+Use this context and discovered signals.
+Context:\n${context || 'none'}
+People: ${names.join(', ') || 'none'}
+Orgs: ${orgs.join(', ') || 'none'}
+Anomalies: ${topAn.join(', ') || 'none'}
+Return JSON array of strings only.`;
+
+    const aiResp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${openRouterKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.3 })
+    });
+    const aiJson = await aiResp.json();
+    const raw = String(aiJson?.choices?.[0]?.message?.content || '').trim();
+    let parsed = null;
+    try { parsed = JSON.parse(raw.replace(/^```json/i, '').replace(/```$/i, '').trim()); } catch {}
+    if (Array.isArray(parsed)) return res.json({ ok: true, source: 'ai', suggestions: parsed.slice(0, 8) });
+    return res.json({ ok: true, source: 'heuristic-fallback', suggestions: suggestions.slice(0, 8) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message || 'suggestions failed' });
+  }
+});
+
 app.post('/api/openrouter/ping', async (req, res) => {
   const key = String(req.body?.key || '').trim();
   const model = String(req.body?.model || '').trim() || 'openai/gpt-4o-mini';

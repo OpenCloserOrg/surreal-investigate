@@ -19,6 +19,15 @@ function renderThread(messages=[]){
   el.scrollTop = el.scrollHeight;
 }
 
+function renderSuggestions(list = []) {
+  const el = $('suggestions');
+  if (!Array.isArray(list) || !list.length) { el.innerHTML = ''; return; }
+  el.innerHTML = list.slice(0, 8).map((q) => `<button class="sugg-btn" data-q="${String(q).replace(/"/g,'&quot;')}">${String(q).replace(/</g,'&lt;')}</button>`).join('');
+  el.querySelectorAll('button[data-q]').forEach((btn) => {
+    btn.onclick = () => { $('question').value = btn.getAttribute('data-q') || ''; $('question').focus(); };
+  });
+}
+
 async function loadChatMessages(){
   const cacheId = selectedCacheId();
   if(!cacheId || !activeChatId) return renderThread([]);
@@ -33,7 +42,7 @@ async function createNewChatForCache(cacheId, title='New session'){ const r = aw
 
 async function fetchChats(){
   const cacheId = selectedCacheId();
-  if (!cacheId) { $('chat-select').innerHTML=''; activeChatId=''; renderThread([]); return; }
+  if (!cacheId) { $('chat-select').innerHTML=''; activeChatId=''; renderThread([]); renderSuggestions([]); return; }
 
   if (!initializedNewChatForCache.has(cacheId)) {
     await createNewChatForCache(cacheId, `Session ${new Date().toLocaleString()}`);
@@ -124,6 +133,24 @@ $('index-btn').onclick=async()=>{
   await fetchCaches();
 };
 
+$('suggest-btn').onclick = async ()=>{
+  const cacheId=selectedCacheId(); if(!cacheId) return;
+  $('query-status').textContent = 'Suggesting questions...';
+  const r = await fetch(`/api/suggest-questions/${cacheId}`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      chatId: activeChatId,
+      mode: $('or-key').value.trim() ? 'ai' : 'heuristic',
+      openRouterKey: $('or-key').value.trim(),
+      model: $('or-model').value.trim()
+    })
+  });
+  const j = await r.json();
+  if (!r.ok || !j.ok) { $('query-status').textContent = `Suggestion failed: ${j.error||'unknown'}`; return; }
+  renderSuggestions(j.suggestions || []);
+  $('query-status').textContent = `Suggestions ready (${j.source}).`;
+};
+
 $('ask-btn').onclick=async()=>{
   const cacheId=selectedCacheId(); const q=$('question').value.trim(); if(!cacheId||!q) return;
   const mode=$('query-mode').value; activeChatId = $('chat-select').value || activeChatId;
@@ -143,6 +170,21 @@ $('ask-btn').onclick=async()=>{
   $('query-status').textContent=`Done. mode=${j.mode}`;
   await fetchChats();
   await loadChatMessages();
+
+  try {
+    const sr = await fetch(`/api/suggest-questions/${cacheId}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        chatId: activeChatId,
+        mode: $('or-key').value.trim() ? 'ai' : 'heuristic',
+        openRouterKey: $('or-key').value.trim(),
+        model: $('or-model').value.trim()
+      })
+    });
+    const sj = await sr.json();
+    if (sr.ok && sj.ok) renderSuggestions(sj.suggestions || []);
+  } catch {}
+
   $('question').value='';
 };
 
