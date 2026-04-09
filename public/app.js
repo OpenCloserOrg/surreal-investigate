@@ -90,15 +90,21 @@ $('file-input').onchange=()=>{
   $('file-preview').innerHTML=files.map(f=>{ const e=ext(f.name); const ok=supported.includes(e); const supportLabel = ok ? '✅' : '⚠️ raw-fallback'; return `<tr><td>${f.name}</td><td>${e||'unknown'}</td><td>${bytes(f.size)}</td><td>${supportLabel}</td></tr>`; }).join('');
 };
 
-$('upload-btn').onclick=async()=>{
-  const cacheId=selectedCacheId(); const files=[...$('file-input').files]; if(!cacheId||!files.length) return;
+async function uploadSelectedFilesIfAny(){
+  const cacheId=selectedCacheId(); const files=[...$('file-input').files];
+  if(!cacheId || !files.length) return { uploaded: 0, skipped: true };
   $('upload-status').textContent = `Uploading ${files.length} file(s)...`;
   const fd=new FormData(); fd.append('cacheId',cacheId); files.forEach(f=>fd.append('files',f));
   const r=await fetch('/api/upload',{method:'POST',body:fd}); const j=await r.json();
-  if(!r.ok){ $('upload-status').textContent = `Upload failed: ${j.error||'unknown'}`; return; }
+  if(!r.ok){ $('upload-status').textContent = `Upload failed: ${j.error||'unknown'}`; throw new Error(j.error||'upload failed'); }
   $('file-input').value=''; $('file-preview').innerHTML='';
   $('upload-status').textContent = `Uploaded ${j.files?.length||0} file(s) to cache.`;
   await fetchCaches();
+  return { uploaded: j.files?.length || 0, skipped: false };
+}
+
+$('upload-btn').onclick=async()=>{
+  try { await uploadSelectedFilesIfAny(); } catch {}
 };
 
 $('load-sample').onclick=async()=>{
@@ -138,6 +144,26 @@ $('suggest-strategy').onclick = async ()=>{
 
 $('index-btn').onclick=async()=>{
   const cacheId=selectedCacheId(); if(!cacheId) return;
+
+  try {
+    const up = await uploadSelectedFilesIfAny();
+    if (!up.skipped) {
+      $('index-log').textContent = `Auto-upload complete (${up.uploaded} file(s)). Starting index...`;
+    }
+  } catch (error) {
+    $('index-log').textContent = `Cannot index: upload step failed (${error.message}).`;
+    return;
+  }
+
+  const cacheRes = await fetch('/api/caches');
+  const cacheJson = await cacheRes.json();
+  const active = (cacheJson.caches || []).find((c) => c.id === cacheId);
+  if (!active || !(active.files || []).length) {
+    $('index-log').textContent = 'Cannot index: this cache has 0 uploaded files. Select files and click Upload (or click Index with files selected to auto-upload).';
+    setProgress(0);
+    return;
+  }
+
   const ok = await checkSurreal();
   if(!ok){ $('index-log').textContent='Cannot index: SurrealDB is unreachable. Start SurrealDB first.'; return; }
 
