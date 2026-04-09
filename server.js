@@ -133,7 +133,9 @@ app.post('/api/index/:cacheId', async (req, res) => {
       await db.query('DELETE document WHERE cacheId = $cacheId; DELETE chunk WHERE cacheId = $cacheId;', { cacheId });
       log('Previous index rows for cache cleared.');
 
-      const files = (cache.files || []).filter((f) => f.absPath && fs.existsSync(f.absPath));
+      const allFiles = cache.files || [];
+      const files = allFiles.filter((f) => f.absPath && fs.existsSync(f.absPath));
+      log(`Cache has ${allFiles.length} file records; ${files.length} files currently readable from disk.`);
       let documentCount = 0;
       let chunkCount = 0;
 
@@ -144,11 +146,13 @@ app.post('/api/index/:cacheId', async (req, res) => {
           continue;
         }
         const summary = summarizeText(extracted.text);
+        if (!summary.wordCount) {
+          log(`Skipped empty extraction: ${file.originalName} (method: ${extracted.method || 'unknown'})`);
+          continue;
+        }
         await db.query(
-          'CREATE type::thing($table, $id) CONTENT $data;',
+          'INSERT INTO document $data;',
           {
-            table: 'document',
-            id: file.id,
             data: {
               cacheId,
               fileId: file.id,
@@ -166,10 +170,8 @@ app.post('/api/index/:cacheId', async (req, res) => {
         for (const text of chunks) {
           i += 1;
           await db.query(
-            'CREATE type::thing($table, $id) CONTENT $data;',
+            'INSERT INTO chunk $data;',
             {
-              table: 'chunk',
-              id: `${file.id}-${i}`,
               data: {
                 cacheId,
                 fileId: file.id,
@@ -182,7 +184,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
           );
           chunkCount += 1;
         }
-        log(`Indexed ${file.originalName}: ${summary.wordCount} words, ${chunks.length} chunks.`);
+        log(`Indexed ${file.originalName}: ${summary.wordCount} words, ${chunks.length} chunks (method: ${extracted.method || 'unknown'}).`);
       }
 
       return { documentCount, chunkCount };

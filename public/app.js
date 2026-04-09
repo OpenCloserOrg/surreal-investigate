@@ -40,21 +40,25 @@ $('file-input').onchange=()=>{
 
 $('upload-btn').onclick=async()=>{
   const cacheId=selectedCacheId(); const files=[...$('file-input').files]; if(!cacheId||!files.length) return;
+  $('upload-status').textContent = `Uploading ${files.length} file(s)...`;
   const fd=new FormData(); fd.append('cacheId',cacheId); files.forEach(f=>fd.append('files',f));
   const r=await fetch('/api/upload',{method:'POST',body:fd}); const j=await r.json();
-  if(!r.ok) return alert(j.error||'Upload failed');
+  if(!r.ok){ $('upload-status').textContent = `Upload failed: ${j.error||'unknown'}`; return; }
   $('file-input').value=''; $('file-preview').innerHTML='';
+  $('upload-status').textContent = `Uploaded ${j.files?.length||0} file(s) to cache.`;
   await fetchCaches();
 };
 
 $('load-sample').onclick=async()=>{
   const cacheId=selectedCacheId(); if(!cacheId) return;
+  $('upload-status').textContent = 'Uploading sample fixture...';
   const r=await fetch('/fixtures/sample-case-500w.txt');
   const txt=await r.text();
   const f=new File([txt],'sample-case-500w.txt',{type:'text/plain'});
   const fd=new FormData(); fd.append('cacheId',cacheId); fd.append('files',f);
   const up=await fetch('/api/upload',{method:'POST',body:fd}); const j=await up.json();
-  if(!up.ok) return alert(j.error||'sample upload failed');
+  if(!up.ok){ $('upload-status').textContent = `Sample upload failed: ${j.error||'unknown'}`; return; }
+  $('upload-status').textContent = 'Sample uploaded.';
   await fetchCaches();
 };
 
