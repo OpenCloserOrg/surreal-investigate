@@ -43,6 +43,8 @@ function buildSurrealFormatProfile(profile = null){
         extractionMapping: p.extractionMapping || [],
         domainLexiconRules: p.domainLexiconRules || [],
         tableWriteIntents: p.tableWriteIntents || [],
+        suppressions: p.suppressions || [],
+        priorityRelationships: p.priorityRelationships || [],
         tableDesign: p.tableDesign || []
       }
     },
@@ -293,7 +295,7 @@ $('generate-feature-plans').onclick = async ()=>{
   const cacheId = selectedCacheId(); if(!cacheId) return;
   $('feature-plan-status').innerHTML = '<span class="spinner"></span>Generating feature plans (can take up to 1–2 minutes)...';
   const goal = $('feature-goal').value.trim();
-  const reqBody = { goal, ...aiCredPayload() };
+  const reqBody = { goal, applyDetectedRecipe: $('use-detected-recipe')?.checked !== false, mainIntent: $('main-intent')?.value || 'auto', ...aiCredPayload() };
   const safeBody = { ...reqBody, openRouterKey: reqBody.openRouterKey ? `${String(reqBody.openRouterKey).slice(0,6)}***${String(reqBody.openRouterKey).slice(-4)}` : undefined };
   const reqPreview = {
     request: {
@@ -349,14 +351,14 @@ function renderFeaturePlans(plans = []) {
   const el = $('feature-plans');
   featurePlansState = Array.isArray(plans) ? plans : [];
   if (!featurePlansState.length) { el.innerHTML = ''; setSelectedPlanUI(-1); return; }
-  el.innerHTML = featurePlansState.map((p, idx)=>`<details class="feature-plan" ${idx===0?'open':''}><summary>${(p.tier||'Plan').replace(/</g,'&lt;')} — ${(p.name||'').replace(/</g,'&lt;')} ${selectedPlanIdx===idx?'✅':''}</summary><p class="muted">${String(p.explanation||'').replace(/</g,'&lt;')}</p><p><strong>Performance setup:</strong> chunk ${p.indexOptions?.chunkSize||1400}, workers ${p.indexOptions?.parallelWorkers||1}, analysis ${p.indexOptions?.analysisEnabled===false?'off':'on'}</p><p><strong>Estimated indexing:</strong> ${p.estimatedTime || 'n/a'}</p><p><strong>Example question:</strong> ${String(p.exampleQuestion||'').replace(/</g,'&lt;')}</p><p><strong>Extraction mapping:</strong> ${(p.extractionMapping||[]).slice(0,3).map((x)=>String(x).replace(/</g,'&lt;')).join(' • ') || 'n/a'}</p><p><strong>Domain lexicon:</strong> ${(p.domainLexiconRules||[]).slice(0,8).map((x)=>String(x).replace(/</g,'&lt;')).join(', ') || 'n/a'}</p><ul>${(p.tableWriteIntents||p.tableDesign||[]).map((t)=>`<li>${String(t).replace(/</g,'&lt;')}</li>`).join('')}</ul><div class="row"><button class="use-plan" data-plan-idx="${idx}">${selectedPlanIdx===idx?'Selected ✅':'Use This Feature Plan'}</button><button class="view-plan" data-plan-idx="${idx}">See Surreal Format</button></div></details>`).join('');
+  el.innerHTML = featurePlansState.map((p, idx)=>`<details class="feature-plan" ${idx===0?'open':''}><summary>${(p.tier||'Plan').replace(/</g,'&lt;')} — ${(p.name||'').replace(/</g,'&lt;')} ${selectedPlanIdx===idx?'✅':''}</summary><p class="muted">${String(p.explanation||'').replace(/</g,'&lt;')}</p><p><strong>Performance setup:</strong> chunk ${p.indexOptions?.chunkSize||1400}, workers ${p.indexOptions?.parallelWorkers||1}, analysis ${p.indexOptions?.analysisEnabled===false?'off':'on'}</p><p><strong>Estimated indexing:</strong> ${p.estimatedTime || 'n/a'}</p><p><strong>Example question:</strong> ${String(p.exampleQuestion||'').replace(/</g,'&lt;')}</p><p><strong>Extraction mapping:</strong> ${(p.extractionMapping||[]).slice(0,3).map((x)=>String(x).replace(/</g,'&lt;')).join(' • ') || 'n/a'}</p><p><strong>Domain lexicon:</strong> ${(p.domainLexiconRules||[]).slice(0,8).map((x)=>String(x).replace(/</g,'&lt;')).join(', ') || 'n/a'}</p><p><strong>Suppressions:</strong> ${(p.suppressions||[]).slice(0,6).map((x)=>String(x).replace(/</g,'&lt;')).join(', ') || 'none'}</p><p><strong>Priority relationships:</strong> ${(p.priorityRelationships||[]).slice(0,4).map((x)=>String(x).replace(/</g,'&lt;')).join(' • ') || 'n/a'}</p><ul>${(p.tableWriteIntents||p.tableDesign||[]).map((t)=>`<li>${String(t).replace(/</g,'&lt;')}</li>`).join('')}</ul><div class="row"><button class="use-plan" data-plan-idx="${idx}">${selectedPlanIdx===idx?'Selected ✅':'Use This Feature Plan'}</button><button class="view-plan" data-plan-idx="${idx}">See Surreal Format</button></div></details>`).join('');
   setSelectedPlanUI(selectedPlanIdx);
   el.querySelectorAll('.view-plan').forEach((btn)=>btn.onclick=()=>{ const p=featurePlansState[Number(btn.getAttribute('data-plan-idx'))]; showTraceModal('Surreal Format Preview', buildSurrealFormatProfile(p)); });
   el.querySelectorAll('.use-plan').forEach((btn)=>btn.onclick=async()=>{
     const idx = Number(btn.getAttribute('data-plan-idx'));
     const p=featurePlansState[idx];
     if(!p) return;
-    const profile = { id:`plan-${Date.now()}`, name:p.name||p.tier||'Feature Plan', strategy:p.strategy||'custom', notes:p.explanation||'', tableDesign:p.tableDesign||[], extractionMapping:p.extractionMapping||[], domainLexiconRules:p.domainLexiconRules||[], tableWriteIntents:p.tableWriteIntents||[], indexOptions:p.indexOptions||currentIndexOptions(), examples:[{table:'entity',data:{type:'example',value:'...'}},{table:'relation',data:{type:'cooccurrence',sourceValue:'A',targetValue:'B'}}] };
+    const profile = { id:`plan-${Date.now()}`, name:p.name||p.tier||'Feature Plan', strategy:p.strategy||'custom', notes:p.explanation||'', tableDesign:p.tableDesign||[], extractionMapping:p.extractionMapping||[], domainLexiconRules:p.domainLexiconRules||[], tableWriteIntents:p.tableWriteIntents||[], suppressions:p.suppressions||[], priorityRelationships:p.priorityRelationships||[], indexOptions:p.indexOptions||currentIndexOptions(), examples:[{table:'entity',data:{type:'example',value:'...'}},{table:'relation',data:{type:'cooccurrence',sourceValue:'A',targetValue:'B'}}] };
     applyProfile(profile);
     setSelectedPlanUI(idx);
     const cacheId = selectedCacheId();
@@ -393,16 +395,17 @@ function renderUploadedFilePreview(files = []) {
   });
 }
 
-async function runQuickSummary(cacheId){
+async function runQuickSummary(cacheId, force=false){
   if(!cacheId) return;
-  $('quick-file-summary').innerHTML = '<span class="spinner"></span>Scanning uploaded files and generating summary...';
+  $('quick-file-summary').innerHTML = `<span class="spinner"></span>${force?'Regenerating':'Loading'} summary...`;
   const r = await fetch(`/api/cache-quick-summary/${cacheId}`, {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ ...aiCredPayload() })
+    body: JSON.stringify({ force, ...aiCredPayload() })
   });
   const j = await r.json();
   if (!r.ok || !j.ok) { $('quick-file-summary').textContent = `Summary failed: ${j.error||'unknown'}`; return; }
   $('quick-file-summary').textContent = j.summary || 'No summary.';
+  if ($('detected-recipe')) $('detected-recipe').textContent = `Detected recipe: ${j.detectedRecipe || 'n/a'}`;
   if (Array.isArray(j.snippets)) {
     const activeRows = j.snippets.map((s)=>({ originalName: s.filename, size: 0, supported: true, samplePreview: s.sample, extractedChars: s.extractedChars || 0, extractionMethod: s.extractionMethod || 'unknown', path: s.storedPath || '' }));
     const existing = [...$('file-preview').querySelectorAll('tr')];
@@ -465,6 +468,8 @@ $('download-manifest').onclick = async ()=>{
   URL.revokeObjectURL(url);
 };
 $('redo-index-flow').onclick = ()=> scrollToSection('section-index');
+
+$('regenerate-summary').onclick = async ()=>{ const cacheId = selectedCacheId(); if(!cacheId) return notifyBlocked('index'); await runQuickSummary(cacheId, true); };
 
 $('query-strategy-help').onclick = ()=>showTraceModal('Query Strategy Modes', {
   balanced: 'Default mix of relevant chunk retrieval + structured Surreal tables.',

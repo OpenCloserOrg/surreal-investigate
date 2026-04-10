@@ -113,7 +113,24 @@
         <button id="use-recommended" disabled>Apply Recommended</button>
       </div>
       <p class="warn" id="index-warning">⚠ Index and feature-plan controls unlock after selecting a cache with uploaded files.</p>
-      <p class="muted" id="quick-file-summary">No file summary yet. Upload files to auto-scan.</p>
+      <div class="row">
+        <p class="muted" id="quick-file-summary" style="flex:1">No file summary yet. Upload files to auto-scan.</p>
+        <button id="regenerate-summary">Regenerate Summary</button>
+      </div>
+      <div class="row">
+        <label><input id="use-detected-recipe" type="checkbox" checked /> Use detected recipe defaults</label>
+        <span class="muted" id="detected-recipe">Detected recipe: n/a</span>
+      </div>
+      <div class="row">
+        <select id="main-intent">
+          <option value="auto">Main intent: Auto-detect</option>
+          <option value="predict">Predict likely future outcomes</option>
+          <option value="patterns">Uncover non-obvious patterns</option>
+          <option value="contradictions">Find contradictions</option>
+          <option value="loopholes">Find loopholes/levers</option>
+          <option value="facts">Extract durable facts</option>
+        </select>
+      </div>
       <p class="muted" id="index-recommendation">No recommendation loaded yet.</p>
       <p class="guide"><i class="fa-regular fa-lightbulb"></i> <strong>Guidance:</strong> Feature plans define domain extraction logic (mapping, lexicon rules, and table write intents). Generating plans may take up to 1–2 minutes depending on model speed.</p>
       <div class="row">

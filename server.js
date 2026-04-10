@@ -961,11 +961,16 @@ Return:
 
 app.post('/api/cache-quick-summary/:cacheId', async (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
+  const force = Boolean(req.body?.force);
   const openRouterKey = String(req.body?.openRouterKey || '').trim() || AI_API_KEY;
   const model = String(req.body?.model || '').trim() || AI_MODEL;
   const data = readCaches();
   const cache = findCache(data, cacheId);
   if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
+
+  if (!force && cache.quickSummary?.summary && cache.quickSummary?.detectedRecipe) {
+    return res.json({ ok: true, source: 'cached', summary: cache.quickSummary.summary, detectedRecipe: cache.quickSummary.detectedRecipe, snippets: cache.quickSummary.snippets || [] });
+  }
 
   const files = (cache.files || []).slice(-6);
 
@@ -1002,16 +1007,34 @@ app.post('/api/cache-quick-summary/:cacheId', async (req, res) => {
     sample: String(f.samplePreview || '').slice(0, 220)
   }));
   const readable = snippets.filter((s) => s.extractedWords > 0 && s.sample.trim());
+  const names = files.map((f) => String(f.originalName || '').toLowerCase());
+  const hasSpreadsheet = names.some((n) => n.endsWith('.csv') || n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.tsv'));
+  const hasGeo = /latitude|longitude|lat|lon|route|vessel|port|geo|epsg|geotiff|movement/i.test(readable.map((r)=>r.sample).join(' '));
+  const hasNarrative = /chapter|verse|narrative|story|book|gospel|genesis|exodus|psalm|prophet/i.test(readable.map((r)=>r.sample).join(' '));
+  const hasComms = /from:|to:|subject:|email|thread|message|reply/i.test(readable.map((r)=>r.sample).join(' '));
+  let detectedRecipe = 'research-report';
+  if (hasSpreadsheet && hasGeo) detectedRecipe = 'mixed(structured+geo)';
+  else if (hasSpreadsheet) detectedRecipe = 'structured-table';
+  else if (hasGeo) detectedRecipe = 'geo-movement';
+  else if (hasNarrative) detectedRecipe = 'narrative-longform';
+  else if (hasComms) detectedRecipe = 'communications';
+
   if (!readable.length) {
-    return res.json({ ok: true, source: 'no-readable-data', summary: 'No readable text detected yet. This may be a scanned/image PDF or unsupported content.', snippets });
+    return res.json({ ok: true, source: 'no-readable-data', summary: 'No readable text detected yet. This may be a scanned/image PDF or unsupported content.', detectedRecipe, snippets });
   }
 
-  const fallback = `Detected ${readable.length}/${snippets.length} readable file(s). Main terms: ${readable.map((r) => r.sample.split(/\s+/).slice(0, 8).join(' ')).join(' | ').slice(0, 220)}...`;
-  if (!openRouterKey) return res.json({ ok: true, source: 'heuristic', summary: fallback, snippets });
+  const fallback = `Detected ${readable.length}/${snippets.length} readable file(s). Recipe: ${detectedRecipe}. Main terms: ${readable.map((r) => r.sample.split(/\s+/).slice(0, 8).join(' ')).join(' | ').slice(0, 220)}...`;
+  if (!openRouterKey) {
+    cache.quickSummary = { summary: fallback, detectedRecipe, snippets, updatedAt: new Date().toISOString() };
+    writeCaches(data);
+    return res.json({ ok: true, source: 'heuristic', summary: fallback, detectedRecipe, snippets });
+  }
 
   try {
-    const prompt = `Summarize this uploaded dataset in 3 concise bullets for an indexing setup UI. Mention likely topic/domain and what can be analyzed.
-JSON only: {"summary":"..."}
+    const prompt = `Summarize this uploaded dataset in 3 concise bullets for an indexing setup UI.
+Also recommend the best Surreal indexing recipe and suppression policy.
+Return JSON only with keys: summary, detectedRecipe, suppressions (array), metadataPolicy (array).
+Rules: if this looks like research report/narrative, suppress footers/authors/institution boilerplate by default.
 Data snippets:\n${readable.map((s, i) => `#${i + 1} ${s.filename} (words:${s.extractedWords}, method:${s.extractionMethod})\n${s.sample}`).join('\n\n')}`;
     const r = await fetch(AI_PROVIDER_URL, {
       method: 'POST',
@@ -1022,15 +1045,23 @@ Data snippets:\n${readable.map((s, i) => `#${i + 1} ${s.filename} (words:${s.ext
     const raw = String(j?.choices?.[0]?.message?.content || '').trim();
     let parsed = null;
     try { parsed = JSON.parse(raw.replace(/^```json/i, '').replace(/```$/i, '').trim()); } catch {}
-    return res.json({ ok: true, source: parsed?.summary ? 'ai' : 'heuristic-fallback', summary: parsed?.summary || fallback, snippets });
+    const summary = parsed?.summary || fallback;
+    const recipe = parsed?.detectedRecipe || detectedRecipe;
+    cache.quickSummary = { summary, detectedRecipe: recipe, snippets, updatedAt: new Date().toISOString() };
+    writeCaches(data);
+    return res.json({ ok: true, source: parsed?.summary ? 'ai' : 'heuristic-fallback', summary, detectedRecipe: recipe, snippets, suppressions: parsed?.suppressions || [], metadataPolicy: parsed?.metadataPolicy || [] });
   } catch {
-    return res.json({ ok: true, source: 'heuristic-error-fallback', summary: fallback, snippets });
+    cache.quickSummary = { summary: fallback, detectedRecipe, snippets, updatedAt: new Date().toISOString() };
+    writeCaches(data);
+    return res.json({ ok: true, source: 'heuristic-error-fallback', summary: fallback, detectedRecipe, snippets });
   }
 });
 
 app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
   const goal = String(req.body?.goal || '').trim() || 'Find patterns, relationships, and anomalies in this dataset';
+  const applyDetectedRecipe = req.body?.applyDetectedRecipe !== false;
+  const mainIntent = String(req.body?.mainIntent || 'auto').trim();
   const openRouterKey = String(req.body?.openRouterKey || '').trim() || AI_API_KEY;
   const model = String(req.body?.model || '').trim() || AI_MODEL;
   const data = readCaches();
@@ -1038,6 +1069,7 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
   if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
 
   const files = (cache.files || []).filter((f) => f.absPath && fs.existsSync(f.absPath));
+  const detectedRecipe = cache.quickSummary?.detectedRecipe || 'research-report';
   const fileList = files.slice(0, 8).map((f) => `${f.originalName} (${f.size} bytes)`).join('\n');
   const allWords = [];
   for (const f of files.slice(0, 4)) {
@@ -1089,6 +1121,10 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
   const topTerms = [...freq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,8).map(([t])=>t);
   const domainHint = topTerms.slice(0,3).join(', ') || 'dataset terms';
 
+  const recipeSuppressions = applyDetectedRecipe && /research|narrative/.test(detectedRecipe)
+    ? ['footer lines', 'author affiliations', 'institution boilerplate']
+    : [];
+
   const quick = {
     tier: 'Fast',
     name: 'Quick scan',
@@ -1100,6 +1136,8 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     extractionMapping: ['raw text -> chunk.text', 'high-frequency terms -> keyword summary'],
     domainLexiconRules: topTerms,
     tableWriteIntents: ['document: metadata', 'chunk: retrieval text'],
+    suppressions: recipeSuppressions,
+    priorityRelationships: ['topic <-> metric', 'metric <-> location', 'claim <-> evidence'],
     exampleQuestion: `What are the main recurring themes in this ${domainHint} dataset related to: ${goal}?`
   };
   const balanced = {
@@ -1113,6 +1151,8 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     extractionMapping: ['domain nouns -> entity.value', 'time/quantity signals -> event', 'co-occurrence -> relation', 'risk flags -> anomaly'],
     domainLexiconRules: topTerms,
     tableWriteIntents: ['entity: named/domain concepts', 'event: measurable changes', 'relation: pair links', 'anomaly: unusual spikes'],
+    suppressions: recipeSuppressions,
+    priorityRelationships: ['entity <-> event', 'event <-> location/time', 'method <-> outcome'],
     exampleQuestion: `Which entities, events, and relationships are most correlated with: ${goal}?`
   };
   const hardcore = {
@@ -1126,6 +1166,8 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     extractionMapping: ['actor/action phrases -> activity', 'intent language -> intent', 'entity graph density -> cluster labels'],
     domainLexiconRules: topTerms,
     tableWriteIntents: ['activity: who-did-what', 'intent: objective clues', 'relation: graph edges', 'cluster labels: communities'],
+    suppressions: recipeSuppressions,
+    priorityRelationships: ['actor <-> action', 'action <-> impact', 'cluster <-> anomaly'],
     exampleQuestion: `Show strongest clusters, outliers, and nearest-neighbor correlations relevant to: ${goal}.`
   };
   const heuristicPlans = [quick, balanced, hardcore];
@@ -1133,6 +1175,7 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
   const basePreview = {
     providerEndpoint: AI_PROVIDER_URL,
     model,
+    planningContext: { mainIntent, detectedRecipe, applyDetectedRecipe },
     sampledContext: {
       totalWords,
       sampleWordCount,
@@ -1147,6 +1190,9 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     const prompt = `You are designing indexing feature plans for a SurrealDB investigative app.
 Create exactly 3 options: Fast, Balanced, Hardcore.
 User goal: ${goal}
+Main intent: ${mainIntent}
+Detected recipe: ${detectedRecipe}
+Apply detected recipe defaults: ${applyDetectedRecipe ? 'yes' : 'no'}
 Files:\n${fileList || 'none'}
 Data sample (max 200 words):\n${sampleText || 'no sample extracted'}
 Sample summary:\n${sampleSummary || 'none'}
@@ -1154,7 +1200,7 @@ Deterministic context chunks (~100 words each from beginning/middle/end):\n${sam
 Return strict JSON array of 3 objects with keys:
 - tier (Fast|Balanced|Hardcore)
 - name
-- strategy (investigation-default|entities-first|timeline-first|money-flow|custom)
+- strategy (investigation-default|entities-first|timeline-first|custom)
 - explanation
 - indexOptions { chunkSize (300-8000), parallelWorkers (1-24), analysisEnabled (bool), preferGpu (bool) }
 - estimatedTime (Low|Medium|High)
@@ -1162,10 +1208,13 @@ Return strict JSON array of 3 objects with keys:
 - extractionMapping (array of field mapping rules as plain strings; no objects)
 - domainLexiconRules (array of domain terms/rules as plain strings; no objects)
 - tableWriteIntents (array describing what is written to each table as plain strings; no objects)
+- suppressions (array of low-value text patterns to suppress)
+- priorityRelationships (array of top relationship pairs to model)
 - exampleQuestion
 Critical constraints:
 - Be intent-driven and file-driven from the sample.
 - Do NOT default to banking/accounts/transactions unless those terms appear in sample or goal.
+- Treat country names (e.g., United States) as location/geopolitical entities, not people.
 - If uncertain, state uncertainty and stay generic to detected domain terms.
 Make options meaningfully different and practical.`;
 
@@ -1191,6 +1240,8 @@ Make options meaningfully different and practical.`;
         extractionMapping: Array.isArray(p.extractionMapping) ? p.extractionMapping.map((x) => asPlainText(x)).slice(0, 12) : [],
         domainLexiconRules: Array.isArray(p.domainLexiconRules) ? p.domainLexiconRules.map((x) => asPlainText(x)).slice(0, 20) : [],
         tableWriteIntents: Array.isArray(p.tableWriteIntents) ? p.tableWriteIntents.map((x) => asPlainText(x)).slice(0, 12) : [],
+        suppressions: Array.isArray(p.suppressions) ? p.suppressions.map((x) => asPlainText(x)).slice(0, 12) : recipeSuppressions,
+        priorityRelationships: Array.isArray(p.priorityRelationships) ? p.priorityRelationships.map((x)=>asPlainText(x)).slice(0, 8) : ['entity <-> event','event <-> location/time'],
         exampleQuestion: String(p.exampleQuestion || '')
       }));
       return res.json({ ok: true, source: 'ai', plans: cleaned, sampleWordCount, sampleSummary, requestPreview: { ...basePreview, prompt, payload: aiPayload, outboundRequest: { method: 'POST', url: AI_PROVIDER_URL, headers: { Authorization: `Bearer ${maskKey(openRouterKey)}`, 'Content-Type': 'application/json' }, body: aiPayload } } });
