@@ -69,11 +69,13 @@ function applyProfile(profile){
   renderTuningLabels();
   setProfileLock(true);
   $('active-profile-status').textContent = `Using feature plan: ${profile.name || profile.strategy} (${profile.strategy || 'custom'}). Exit plan to edit manual controls.`;
+  applyGateState();
 }
 function clearActiveProfileUI(){
   activeIndexProfile = null;
   setProfileLock(false);
   $('active-profile-status').textContent = 'No active feature plan selected.';
+  applyGateState();
 }
 function setProgress(v=0){ $('index-progress').style.width = `${Math.max(0, Math.min(100, v))}%`; }
 function relTime(iso=''){ const d=new Date(iso); const s=Math.floor((Date.now()-d.getTime())/1000); if(!iso||Number.isNaN(d.getTime())) return ''; if(s<60) return `${s}s ago`; if(s<3600) return `${Math.floor(s/60)}m ago`; if(s<86400) return `${Math.floor(s/3600)}h ago`; return `${Math.floor(s/86400)}d ago`; }
@@ -91,21 +93,41 @@ function notifyBlocked(target){
 }
 
 function applyGateState(){
+  const hasCacheSelected = Boolean(currentCache?.id);
   const selectedLocalFiles = [...($('file-input')?.files || [])].length;
   const hasUploadedFiles = Boolean((currentCache?.files || []).length);
   const isIndexed = Boolean(currentCache?.readyForQuestions);
 
-  $('index-btn').dataset.locked = (!hasUploadedFiles && !selectedLocalFiles) ? '1' : '0';
-  $('load-existing-index').dataset.locked = (!hasUploadedFiles) ? '1' : '0';
-  $('generate-feature-plans').dataset.locked = (!hasUploadedFiles) ? '1' : '0';
-  $('recommend-index-settings').dataset.locked = (!hasUploadedFiles) ? '1' : '0';
+  $('upload-btn').disabled = !hasCacheSelected;
+  $('load-sample').disabled = !hasCacheSelected;
+  $('file-input').disabled = !hasCacheSelected;
 
-  $('ask-btn').dataset.locked = (!isIndexed) ? '1' : '0';
-  $('suggest-btn').dataset.locked = (!isIndexed) ? '1' : '0';
-  $('query-mode').disabled = !isIndexed;
-  $('query-strategy').disabled = !isIndexed;
-  $('query-strategy-notes').disabled = !isIndexed;
-  $('question').disabled = !isIndexed;
+  $('chunk-size').disabled = !hasCacheSelected || Boolean(activeIndexProfile);
+  $('parallel-workers').disabled = !hasCacheSelected || Boolean(activeIndexProfile);
+  $('analysis-enabled').disabled = !hasCacheSelected || Boolean(activeIndexProfile);
+  $('prefer-gpu').disabled = !hasCacheSelected || Boolean(activeIndexProfile);
+
+  $('index-btn').dataset.locked = (!hasCacheSelected || (!hasUploadedFiles && !selectedLocalFiles)) ? '1' : '0';
+  $('load-existing-index').dataset.locked = (!hasCacheSelected || !hasUploadedFiles) ? '1' : '0';
+  $('generate-feature-plans').dataset.locked = (!hasCacheSelected || !hasUploadedFiles) ? '1' : '0';
+  $('recommend-index-settings').dataset.locked = (!hasCacheSelected || !hasUploadedFiles) ? '1' : '0';
+
+  $('ask-btn').dataset.locked = (!hasCacheSelected || !isIndexed) ? '1' : '0';
+  $('suggest-btn').dataset.locked = (!hasCacheSelected || !isIndexed) ? '1' : '0';
+  $('query-mode').disabled = !hasCacheSelected || !isIndexed;
+  $('query-strategy').disabled = !hasCacheSelected || !isIndexed;
+  $('query-strategy-notes').disabled = !hasCacheSelected || !isIndexed;
+  $('question').disabled = !hasCacheSelected || !isIndexed;
+
+  $('upload-warning').textContent = hasCacheSelected
+    ? '⚠ Remember: selecting files is not enough. Click Upload to attach them to this cache.'
+    : '⚠ Select a cache first. Upload actions are inactive until a cache is selected.';
+  $('index-warning').textContent = hasCacheSelected
+    ? (hasUploadedFiles ? '⚠ Feature plans and indexing are available. Tune setup, then run index.' : '⚠ Upload at least one file to unlock feature-plan and index actions.')
+    : '⚠ Index and feature-plan controls unlock after selecting a cache with uploaded files.';
+  $('ask-warning').textContent = hasCacheSelected
+    ? (isIndexed ? '⚠ Ask is ready. Queries now run against indexed Surreal tables.' : '⚠ Ask remains locked until indexing completes for this cache.')
+    : '⚠ Ask section unlocks after cache indexing completes.';
 
   if (!hasUploadedFiles && !selectedLocalFiles) {
     $('index-estimate').textContent = 'Index disabled: upload at least one file to this cache first.';
@@ -329,15 +351,25 @@ $('trace-modal-close').onclick = hideTraceModal;
 $('trace-modal').onclick = (e)=>{ if(e.target.id==='trace-modal') hideTraceModal(); };
 $('confirm-modal').onclick = (e)=>{ if(e.target.id==='confirm-modal') $('confirm-modal').classList.add('hidden'); };
 $('ping-or').onclick=async()=>{ $('or-status').textContent='Pinging...'; const r=await fetch('/api/openrouter/ping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:$('or-key').value.trim(),model:$('or-model').value.trim()})}); const j=await r.json(); if(r.ok&&j.ok){ $('or-dot').className='dot green'; $('or-status').textContent='OpenRouter reachable'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`Ping failed: ${j.error||'unknown'}`; }};
-$('example-pricing').onclick = ()=>showTraceModal('Pricing Data Example Feature Plan', {
-  dataset: 'Large OHLCV pricing CSV/Excel (open/high/low/close/volume)',
-  featurePlanFocus: ['asset entities', 'price move events', 'drawdown anomalies', 'cross-asset relations'],
-  sampleQuestion: 'When two assets are both down and correlation drops, what has positive movement 80% of the time?'
+$('example-pricing').onclick = ()=>showTraceModal('Financial Market Feature Plan (Case Study)', {
+  dataset: 'OHLCV time series in CSV/Excel (timestamp, symbol, open, high, low, close, volume). Optional indicators: RSI, ATR, CORR, rolling beta.',
+  extractionMapping: ['symbol -> entity(asset)', 'OHLC row -> event(price_bar)', 'indicator columns -> activity(signal)', 'cross-symbol lag/correlation -> relation(edge)'],
+  domainLexiconRules: ['open','high','low','close','volume','rsi','corr','volatility','drawdown','momentum'],
+  tableWriteIntents: ['event: bar-level changes', 'anomaly: regime shifts/spikes', 'relation: correlation + lead-lag edges'],
+  sampleQuestions: [
+    'When two assets are in a downtrend and pairwise correlation drops, which assets recover positive within 5 sessions at >=80% historical frequency?',
+    'Which indicator combinations have the highest conditional win-rate after 3-day drawdowns?'
+  ]
 });
-$('example-shipping').onclick = ()=>showTraceModal('Ship Movement Example Feature Plan', {
-  dataset: 'AIS/ship movement CSV (timestamp, latitude, longitude, vessel type, port)',
-  featurePlanFocus: ['ship entities', 'movement events', 'route clusters', 'lead-lag relation edges'],
-  sampleQuestion: 'When ship A activity falls, which other ship types move less in the next 30 days?'
+$('example-shipping').onclick = ()=>showTraceModal('Ship Movement Feature Plan (Case Study)', {
+  dataset: 'AIS movement CSV (timestamp, vessel_id, vessel_type, latitude, longitude, speed, heading, port_call, cargo status).',
+  extractionMapping: ['vessel_id -> entity(ship)', 'lat/lon/time rows -> event(movement_point)', 'port transitions -> activity(route_leg)', 'co-movement windows -> relation(lead-lag/correlation)'],
+  domainLexiconRules: ['latitude','longitude','heading','speed','port','arrival','departure','cargo','anchorage','route'],
+  tableWriteIntents: ['event: trajectory points', 'activity: route segments', 'relation: ship-to-ship timing influence', 'anomaly: abnormal route deviation'],
+  sampleQuestions: [
+    'When vessel group A activity decreases, which vessel types show reduced movement in the next 30 days?',
+    'Which import route clusters lead to secondary feeder traffic declines with highest probability?'
+  ]
 });
 
 async function createNewChatForCache(cacheId, title='New session'){ const r = await fetch(`/api/chats/${cacheId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ title }) }); return r.json(); }

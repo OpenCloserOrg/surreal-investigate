@@ -4,13 +4,15 @@
   <img src="images/Surreal-Investigate.jpg" alt="Surreal Investigate logo" width="220" />
 </p>
 
-Local-first **SurrealDB + Node.js** investigation app.
+Local-first **SurrealDB + Node.js** data intelligence app for large file collections.
+
+Use it to turn mixed documents/spreadsheets/logs into durable structured memory that AI can query for patterns, correlations, and probability-style insights.
 
 When fully running, you can:
-1. Create a cache (case bucket)
+1. Create a cache (dataset workspace)
 2. Upload files (or load sample fixture)
-3. Index into SurrealDB
-4. See **Ready for questions**
+3. Generate feature plans (domain extraction mapping + lexicon + table intents)
+4. Index into SurrealDB
 5. Ask in either:
    - **Surreal only** (no LLM cost)
    - **Surreal + AI** (OpenRouter)
@@ -30,7 +32,9 @@ When fully running, you can:
   - Surreal search mode (term-driven retrieval)
   - Surreal retrieval + OpenRouter synthesis
 - Query strategy controls (preset + custom notes)
-- Index strategy controls (preset + custom notes) + AI/heuristic suggestion helper
+- Index strategy controls (preset + custom notes)
+- Feature plan generation (fast/balanced/hardcore) with extraction mapping + lexicon + table write intents
+- AI request preview for feature-plan generation (prompt + sampled chunks + payload)
 - Chat persistence per cache in `chat-logs/<cache-id>/<chat-id>.json`
 - Continue conversations with context from prior turns in each chat
 - OpenRouter key/model local storage
@@ -148,12 +152,18 @@ INDEX_JOB_TIMEOUT_MS=1200000
 - `GET /api/config`
 - `GET /api/caches`
 - `POST /api/caches`
+- `DELETE /api/cache-file/:cacheId/:fileId`
 - `GET /api/chats/:cacheId`
 - `POST /api/chats/:cacheId`
 - `GET /api/chats/:cacheId/:chatId`
 - `POST /api/upload`
+- `POST /api/cache-quick-summary/:cacheId`
+- `POST /api/index/feature-plans/:cacheId`
+- `GET /api/index-recommendation/:cacheId`
 - `POST /api/index/:cacheId`
-- `POST /api/index/strategy-suggest/:cacheId`
+- `GET /api/index-profile/:cacheId`
+- `POST /api/index-profile/:cacheId`
+- `DELETE /api/index-profile/:cacheId`
 - `POST /api/query/:cacheId`
 - `POST /api/openrouter/ping`
 
