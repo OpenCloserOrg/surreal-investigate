@@ -14,6 +14,7 @@ function duration(sec=0){ const s=Math.max(0, Math.round(Number(sec)||0)); if(s<
 function currentIndexOptions(){ return { chunkSize: Number($('chunk-size').value || 1400), parallelWorkers: Number($('parallel-workers').value || 1), analysisEnabled: $('analysis-enabled').checked, preferGpu: $('prefer-gpu').checked }; }
 function renderTuningLabels(){ $('chunk-size-value').textContent = $('chunk-size').value; $('workers-value').textContent = $('parallel-workers').value; }
 function selectedCacheId(){ return $('cache-select').value; }
+function aiCredPayload(){ return isEnvMode() ? { useEnv: true } : { openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim(), providerUrl: $('or-provider-url').value.trim() }; }
 function buildSurrealFormatProfile(profile = null){
   const p = profile || {
     name: $('index-strategy').value,
@@ -176,11 +177,27 @@ function setTraceStep(step, state, detail){
   renderLiveTrace();
 }
 
-function loadOpenRouter(){ $('or-key').value=localStorage.getItem('openrouter.key')||''; $('or-model').value=localStorage.getItem('openrouter.model')||'openai/gpt-4o-mini'; }
+function isEnvMode(){ return $('cred-env')?.checked; }
+function loadOpenRouter(){
+  const mode = localStorage.getItem('creds.mode') || 'local';
+  $('cred-local').checked = mode !== 'env';
+  $('cred-env').checked = mode === 'env';
+  $('or-provider-url').value = localStorage.getItem('openrouter.providerUrl')||'';
+  $('or-key').value=localStorage.getItem('openrouter.key')||'';
+  $('or-model').value=localStorage.getItem('openrouter.model')||'openai/gpt-4o-mini';
+}
 function updateQuestionPlaceholder(){ $('question').placeholder = $('query-mode').value === 'surreal' ? 'Search term(s)' : 'Ask a follow-up question'; }
+function updateCredModeUI(){
+  const env = isEnvMode();
+  $('or-key').disabled = env;
+  $('or-provider-url').disabled = env;
+  if (env) $('or-status').textContent = '.env mode active. Click "Load from .env" then Retest.';
+}
 $('query-mode').onchange = updateQuestionPlaceholder;
 $('chunk-size').oninput = renderTuningLabels;
 $('parallel-workers').oninput = renderTuningLabels;
+$('cred-local').onchange = ()=>{ localStorage.setItem('creds.mode','local'); updateCredModeUI(); };
+$('cred-env').onchange = ()=>{ localStorage.setItem('creds.mode','env'); updateCredModeUI(); };
 
 $('recommend-index-settings').onclick = async ()=>{
   if ($('recommend-index-settings').dataset.locked === '1') return notifyBlocked('index');
@@ -239,7 +256,7 @@ $('generate-feature-plans').onclick = async ()=>{
   const goal = $('feature-goal').value.trim();
   const r = await fetch(`/api/index/feature-plans/${cacheId}`, {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ goal, openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() })
+    body: JSON.stringify({ goal, ...aiCredPayload() })
   });
   const j = await r.json();
   if (!r.ok || !j.ok) { $('feature-plan-status').textContent = `Feature planning failed: ${j.error||'unknown'}`; return; }
@@ -317,7 +334,7 @@ async function runQuickSummary(cacheId){
   $('quick-file-summary').innerHTML = '<span class="spinner"></span>Scanning uploaded files and generating summary...';
   const r = await fetch(`/api/cache-quick-summary/${cacheId}`, {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() })
+    body: JSON.stringify({ ...aiCredPayload() })
   });
   const j = await r.json();
   if (!r.ok || !j.ok) { $('quick-file-summary').textContent = `Summary failed: ${j.error||'unknown'}`; return; }
@@ -346,11 +363,19 @@ async function loadChatMessages(){
   renderThread(j?.chat?.messages || []);
 }
 
-$('save-or').onclick=()=>{ localStorage.setItem('openrouter.key',$('or-key').value.trim()); localStorage.setItem('openrouter.model',$('or-model').value.trim()); $('or-dot').className='dot green'; $('or-status').textContent='Saved locally'; };
+$('save-or').onclick=()=>{
+  localStorage.setItem('creds.mode', isEnvMode() ? 'env' : 'local');
+  localStorage.setItem('openrouter.providerUrl',$('or-provider-url').value.trim());
+  localStorage.setItem('openrouter.key',$('or-key').value.trim());
+  localStorage.setItem('openrouter.model',$('or-model').value.trim());
+  $('or-dot').className='dot green';
+  $('or-status').textContent = isEnvMode() ? 'Mode saved: .env' : 'Saved locally (testing mode)';
+};
 $('trace-modal-close').onclick = hideTraceModal;
 $('trace-modal').onclick = (e)=>{ if(e.target.id==='trace-modal') hideTraceModal(); };
 $('confirm-modal').onclick = (e)=>{ if(e.target.id==='confirm-modal') $('confirm-modal').classList.add('hidden'); };
-$('ping-or').onclick=async()=>{ $('or-status').textContent='Pinging...'; const r=await fetch('/api/openrouter/ping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:$('or-key').value.trim(),model:$('or-model').value.trim()})}); const j=await r.json(); if(r.ok&&j.ok){ $('or-dot').className='dot green'; $('or-status').textContent='OpenRouter reachable'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`Ping failed: ${j.error||'unknown'}`; }};
+$('ping-or').onclick=async()=>{ $('or-status').textContent='Pinging...'; const r=await fetch('/api/openrouter/ping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({useEnv:isEnvMode(),key:$('or-key').value.trim(),model:$('or-model').value.trim(),providerUrl:$('or-provider-url').value.trim()})}); const j=await r.json(); if(r.ok&&j.ok){ $('or-dot').className='dot green'; $('or-status').textContent='Provider reachable'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`Ping failed: ${j.error||'unknown'}`; }};
+$('load-env-creds').onclick=async()=>{ $('or-status').textContent='Loading .env credentials...'; const r=await fetch('/api/credentials/env-load'); const j=await r.json(); if(j?.providerUrl) $('or-provider-url').value=j.providerUrl; if(j?.model) $('or-model').value=j.model; $('cred-env').checked=true; $('cred-local').checked=false; localStorage.setItem('creds.mode','env'); if(j.ok && j.active){ $('or-dot').className='dot green'; $('or-status').textContent='Loaded from .env and ping passed'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`.env load: ${j.message||'not active'}`; } };
 $('example-pricing').onclick = ()=>showTraceModal('Financial Market Feature Plan (Case Study)', {
   dataset: 'OHLCV time series in CSV/Excel (timestamp, symbol, open, high, low, close, volume). Optional indicators: RSI, ATR, CORR, rolling beta.',
   extractionMapping: ['symbol -> entity(asset)', 'OHLC row -> event(price_bar)', 'indicator columns -> activity(signal)', 'cross-symbol lag/correlation -> relation(edge)'],
@@ -517,8 +542,7 @@ $('suggest-btn').onclick = async ()=>{
     body: JSON.stringify({
       chatId: activeChatId,
       mode: 'heuristic',
-      openRouterKey: $('or-key').value.trim(),
-      model: $('or-model').value.trim()
+      ...aiCredPayload()
     })
   });
   const j = await r.json();
@@ -531,7 +555,7 @@ $('ask-btn').onclick=async()=>{
   if ($('ask-btn').dataset.locked === '1') return notifyBlocked('ask');
   const cacheId=selectedCacheId(); const q=$('question').value.trim(); if(!cacheId||!q) return;
   const mode=$('query-mode').value; activeChatId = $('chat-select').value || activeChatId;
-  const payload = { question:q, mode, chatId: activeChatId, queryStrategy: $('query-strategy').value, queryStrategyNotes: $('query-strategy-notes').value.trim(), openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() };
+  const payload = { question:q, mode, chatId: activeChatId, queryStrategy: $('query-strategy').value, queryStrategyNotes: $('query-strategy-notes').value.trim(), ...aiCredPayload() };
 
   // optimistic user bubble
   const current = $('chat-thread').innerHTML;
@@ -600,7 +624,7 @@ $('ask-btn').onclick=async()=>{
   try {
     const sr = await fetch(`/api/suggest-questions/${cacheId}`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ chatId: activeChatId, mode: 'heuristic', openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() })
+      body: JSON.stringify({ chatId: activeChatId, mode: 'heuristic', ...aiCredPayload() })
     });
     const sj = await sr.json();
     if (sr.ok && sj.ok) renderSuggestions(sj.suggestions || []);
@@ -609,4 +633,4 @@ $('ask-btn').onclick=async()=>{
   $('question').value='';
 };
 
-(async()=>{ loadOpenRouter(); updateQuestionPlaceholder(); renderTuningLabels(); await fetchCaches(); await checkSurreal(); })();
+(async()=>{ loadOpenRouter(); updateCredModeUI(); updateQuestionPlaceholder(); renderTuningLabels(); await fetchCaches(); await checkSurreal(); })();

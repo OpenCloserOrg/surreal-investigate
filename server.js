@@ -17,6 +17,9 @@ const DATA_DIR = path.join(ROOT, 'data');
 const CHAT_LOGS_DIR = path.join(ROOT, 'chat-logs');
 const CACHES_JSON = path.join(APP_DIR, 'caches.json');
 const INDEX_JOB_TIMEOUT_MS = Number(process.env.INDEX_JOB_TIMEOUT_MS || 20 * 60 * 1000);
+const AI_PROVIDER_URL = String(process.env.AI_PROVIDER_URL || process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions').trim();
+const AI_API_KEY = String(process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY || '').trim();
+const AI_MODEL = String(process.env.AI_MODEL || process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini').trim();
 const indexJobs = new Map();
 const DEFAULT_INDEX_OPTIONS = {
   chunkSize: 1400,
@@ -188,7 +191,25 @@ app.get('/api/surreal/health', async (_req, res) => {
     return res.status(500).json({ ok: false, surreal: 'unreachable', error: error.message, config: surrealConfig });
   }
 });
-app.get('/api/config', (_req, res) => res.json({ ok: true, surreal: surrealConfig }));
+app.get('/api/config', (_req, res) => res.json({ ok: true, surreal: surrealConfig, ai: { providerUrl: AI_PROVIDER_URL, model: AI_MODEL, envKeyLoaded: Boolean(AI_API_KEY) } }));
+app.get('/api/credentials/env-load', async (_req, res) => {
+  const envLoaded = Boolean(AI_PROVIDER_URL && AI_API_KEY && AI_MODEL);
+  if (!envLoaded) {
+    return res.json({ ok: false, envLoaded: false, providerUrl: AI_PROVIDER_URL, model: AI_MODEL, message: 'Missing one or more env vars: AI_PROVIDER_URL, AI_API_KEY, AI_MODEL' });
+  }
+  try {
+    const pingResp = await fetch(AI_PROVIDER_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${AI_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: AI_MODEL, messages: [{ role: 'user', content: 'ping' }], max_tokens: 8 })
+    });
+    const pingJson = await pingResp.json();
+    if (!pingResp.ok) return res.json({ ok: false, envLoaded: true, active: false, providerUrl: AI_PROVIDER_URL, model: AI_MODEL, message: pingJson?.error?.message || `HTTP ${pingResp.status}` });
+    return res.json({ ok: true, envLoaded: true, active: true, providerUrl: AI_PROVIDER_URL, model: AI_MODEL });
+  } catch (error) {
+    return res.json({ ok: false, envLoaded: true, active: false, providerUrl: AI_PROVIDER_URL, model: AI_MODEL, message: error.message || 'env ping failed' });
+  }
+});
 app.get('/api/system-profile', (_req, res) => res.json({ ok: true, system: computeSystemProfile() }));
 app.get('/api/index-recommendation/:cacheId', (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
@@ -811,9 +832,9 @@ app.post('/api/query/:cacheId', async (req, res) => {
       });
     }
 
-    const apiKey = String(req.body?.openRouterKey || '').trim();
-    const model = String(req.body?.model || '').trim() || 'openai/gpt-4o-mini';
-    if (!apiKey) return res.status(400).json({ ok: false, error: 'OpenRouter key required for ai mode.' });
+    const apiKey = String(req.body?.openRouterKey || '').trim() || AI_API_KEY;
+    const model = String(req.body?.model || '').trim() || AI_MODEL;
+    if (!apiKey) return res.status(400).json({ ok: false, error: 'API key required for ai mode (provide in UI or .env).' });
 
     const prior = readChatLog(cacheId, chatId).messages || [];
     const priorTurns = prior.slice(-8).map((m) => `${m.role?.toUpperCase?.() || 'MSG'}: ${String(m.content || '').slice(0, 220)}`).join('\n');
@@ -852,7 +873,7 @@ Return:
     pushTrace('openrouter_request_start', {
       explanation: 'Send grounded prompt to OpenRouter chat completions endpoint.',
       model,
-      url: 'https://openrouter.ai/api/v1/chat/completions',
+      url: AI_PROVIDER_URL,
       request: {
         payloadBytes: aiRequestBody.length,
         bodyPreview: aiRequestBody.slice(0, 1400)
@@ -861,7 +882,7 @@ Return:
     pushTrace('openrouter_awaiting_response', { explanation: 'Waiting for model completion from OpenRouter.' });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 60000);
-    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const r = await fetch(AI_PROVIDER_URL, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: aiRequestBody,
@@ -911,8 +932,8 @@ Return:
 
 app.post('/api/cache-quick-summary/:cacheId', async (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
-  const openRouterKey = String(req.body?.openRouterKey || '').trim();
-  const model = String(req.body?.model || '').trim() || 'openai/gpt-4o-mini';
+  const openRouterKey = String(req.body?.openRouterKey || '').trim() || AI_API_KEY;
+  const model = String(req.body?.model || '').trim() || AI_MODEL;
   const data = readCaches();
   const cache = findCache(data, cacheId);
   if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
@@ -938,7 +959,7 @@ app.post('/api/cache-quick-summary/:cacheId', async (req, res) => {
     const prompt = `Summarize this uploaded dataset in 3 concise bullets for an indexing setup UI. Mention likely topic/domain and what can be analyzed.
 JSON only: {"summary":"..."}
 Data snippets:\n${readable.map((s, i) => `#${i + 1} ${s.filename} (words:${s.extractedWords}, method:${s.extractionMethod})\n${s.sample}`).join('\n\n')}`;
-    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const r = await fetch(AI_PROVIDER_URL, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${openRouterKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.2 })
@@ -956,8 +977,8 @@ Data snippets:\n${readable.map((s, i) => `#${i + 1} ${s.filename} (words:${s.ext
 app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
   const goal = String(req.body?.goal || '').trim() || 'Find patterns, relationships, and anomalies in this dataset';
-  const openRouterKey = String(req.body?.openRouterKey || '').trim();
-  const model = String(req.body?.model || '').trim() || 'openai/gpt-4o-mini';
+  const openRouterKey = String(req.body?.openRouterKey || '').trim() || AI_API_KEY;
+  const model = String(req.body?.model || '').trim() || AI_MODEL;
   const data = readCaches();
   const cache = findCache(data, cacheId);
   if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
@@ -1056,7 +1077,7 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
   const heuristicPlans = [quick, balanced, hardcore];
 
   const basePreview = {
-    providerEndpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    providerEndpoint: AI_PROVIDER_URL,
     model,
     sampledContext: {
       totalWords,
@@ -1095,7 +1116,7 @@ Critical constraints:
 Make options meaningfully different and practical.`;
 
     const aiPayload = { model, messages: [{ role: 'user', content: prompt }], temperature: 0.2 };
-    const aiResp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const aiResp = await fetch(AI_PROVIDER_URL, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${openRouterKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(aiPayload)
@@ -1130,8 +1151,8 @@ app.post('/api/suggest-questions/:cacheId', async (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
   const chatId = String(req.body?.chatId || '').trim();
   const mode = String(req.body?.mode || 'heuristic');
-  const model = String(req.body?.model || '').trim() || 'openai/gpt-4o-mini';
-  const openRouterKey = String(req.body?.openRouterKey || '').trim();
+  const model = String(req.body?.model || '').trim() || AI_MODEL;
+  const openRouterKey = String(req.body?.openRouterKey || '').trim() || AI_API_KEY;
 
   try {
     const retrieval = await withTimeout(withSurreal(async (db) => {
@@ -1174,7 +1195,7 @@ Orgs: ${orgs.join(', ') || 'none'}
 Anomalies: ${topAn.join(', ') || 'none'}
 Return JSON array of strings only.`;
 
-    const aiResp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const aiResp = await fetch(AI_PROVIDER_URL, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${openRouterKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.3 })
@@ -1191,11 +1212,13 @@ Return JSON array of strings only.`;
 });
 
 app.post('/api/openrouter/ping', async (req, res) => {
-  const key = String(req.body?.key || '').trim();
-  const model = String(req.body?.model || '').trim() || 'openai/gpt-4o-mini';
+  const useEnv = Boolean(req.body?.useEnv);
+  const key = (useEnv ? AI_API_KEY : String(req.body?.key || '').trim()) || String(req.body?.key || '').trim();
+  const model = (useEnv ? AI_MODEL : String(req.body?.model || '').trim()) || String(req.body?.model || '').trim() || AI_MODEL;
+  const providerUrl = (useEnv ? AI_PROVIDER_URL : String(req.body?.providerUrl || '').trim()) || AI_PROVIDER_URL;
   if (!key) return res.status(400).json({ ok: false, error: 'key required' });
   try {
-    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const r = await fetch(providerUrl, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, messages: [{ role: 'user', content: 'hi' }], max_tokens: 8 })

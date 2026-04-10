@@ -112,6 +112,7 @@ Why this works:
 
 ```bash
 npm install
+cp .env.example .env   # optional but recommended
 npm start
 ```
 
@@ -129,9 +130,13 @@ SURREAL_DB=main
 SURREAL_USER=root
 SURREAL_PASS=root
 INDEX_JOB_TIMEOUT_MS=1200000
+AI_PROVIDER_URL=https://openrouter.ai/api/v1/chat/completions
+AI_API_KEY=sk-or-v1-...
+AI_MODEL=qwen/qwen3-32b
 ```
 
 `INDEX_JOB_TIMEOUT_MS` defaults to 20 minutes.
+`AI_PROVIDER_URL/AI_API_KEY/AI_MODEL` power secure `.env` credential loading in the UI.
 
 ---
 
@@ -152,6 +157,7 @@ INDEX_JOB_TIMEOUT_MS=1200000
 
 - `GET /api/health`
 - `GET /api/config`
+- `GET /api/credentials/env-load`
 - `GET /api/caches`
 - `POST /api/caches`
 - `DELETE /api/cache-file/:cacheId/:fileId`
