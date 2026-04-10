@@ -525,18 +525,22 @@ $('convert-surrealql').onclick = async ()=>{
   const cacheId = selectedCacheId(); if(!cacheId) return notifyBlocked('ask');
   const statement = $('question').value.trim();
   if (!statement) { $('query-status').textContent = 'Enter a statement/question first.'; return; }
+  $('convert-surrealql').disabled = true;
+  $('convert-status').innerHTML = '<span class="spinner"></span><span class="warn-inline">Converting...</span>';
   $('query-status').textContent = 'Converting to SurrealQL...';
   const r = await fetch(`/api/convert-surrealql/${cacheId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ statement, ...aiCredPayload() }) });
   const j = await r.json();
+  $('convert-surrealql').disabled = false;
+  $('convert-status').textContent = '';
   if (!r.ok || !j.ok) { $('query-status').textContent = `Convert failed: ${j.error||'unknown'}`; return; }
-  showTraceModal('Converted SurrealQL', j);
+  $('surrealql-output').textContent = j.surrealql || JSON.stringify(j, null, 2);
   if (j.needsRemodel && j.remodelInstructions) {
     $('index-strategy').value = 'custom';
     $('index-strategy-notes').value = String(j.remodelInstructions).slice(0, 1000);
     $('query-status').textContent = 'Schema remodel recommended. Custom index notes were prefilled.';
     scrollToSection('section-index');
   } else {
-    $('query-status').textContent = 'SurrealQL conversion ready.';
+    $('query-status').textContent = 'SurrealQL conversion ready (shown below input).';
   }
 };
 
@@ -754,7 +758,6 @@ $('ask-btn').onclick=async()=>{
   let r, j;
   const clearTyping = ()=>{ const t = $('assistant-typing'); if (t) t.remove(); };
   try {
-    setTraceStep('parse_query', 'done');
     setTraceStep('surreal_precheck', 'running');
     r=await fetch(`/api/query/${cacheId}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal: ctrl.signal});
     j=await r.json();
@@ -770,6 +773,7 @@ $('ask-btn').onclick=async()=>{
 
   if (j?.trace?.length) {
     for (const step of j.trace) {
+      if (step.step === 'parse_query') setTraceStep('parse_query', 'done', step);
       if (step.step?.includes('surreal_precheck')) setTraceStep('surreal_precheck', 'done', step);
       if (step.step?.includes('surreal_retrieval')) setTraceStep('surreal_retrieval', 'done', step);
       if (step.step?.includes('build_ai_prompt')) setTraceStep('openrouter_call', 'running', step);

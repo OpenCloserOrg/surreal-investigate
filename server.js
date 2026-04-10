@@ -340,7 +340,9 @@ app.post('/api/convert-surrealql/:cacheId', async (req, res) => {
   const prompt = `Convert the user statement into SurrealQL for cacheId ${cacheId} using this schema: ${JSON.stringify(schemaResp)}.\nStatement: ${statement}\nReturn JSON only: { surrealql, needsRemodel, remodelInstructions }. If current schema cannot answer precisely, set needsRemodel=true and provide concise remodelInstructions with custom indexing strategy notes.`;
   try {
     const payload = { model, messages: [{ role: 'user', content: prompt }], temperature: 0.1 };
-    const r = await fetch(AI_PROVIDER_URL, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), 35000);
+    const r = await fetch(AI_PROVIDER_URL, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: ctrl.signal }).finally(()=>clearTimeout(tm));
     const j = await r.json();
     const raw = String(j?.choices?.[0]?.message?.content || '').trim();
     let parsed = null;
