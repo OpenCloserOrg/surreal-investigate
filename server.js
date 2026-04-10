@@ -127,6 +127,13 @@ function normalizeIndexProfile(input = {}) {
   const name = String(input.name || strategy).trim().slice(0, 120);
   const notes = String(input.notes || '').trim().slice(0, 1200);
   const tableDesign = Array.isArray(input.tableDesign) ? input.tableDesign.map((x) => String(x).trim()).filter(Boolean).slice(0, 20) : [];
+  const recommendedTableStructure = Array.isArray(input.recommendedTableStructure)
+    ? input.recommendedTableStructure.slice(0, 20).map((t) => ({
+      table: String(t?.table || '').trim(),
+      purpose: String(t?.purpose || '').trim(),
+      keyFields: Array.isArray(t?.keyFields) ? t.keyFields.map((f)=>String(f).trim()).filter(Boolean).slice(0, 24) : []
+    }))
+    : [];
   const extractionMapping = Array.isArray(input.extractionMapping) ? input.extractionMapping.map((x) => String(x).trim()).filter(Boolean).slice(0, 20) : [];
   const domainLexiconRules = Array.isArray(input.domainLexiconRules) ? input.domainLexiconRules.map((x) => String(x).trim()).filter(Boolean).slice(0, 40) : [];
   const tableWriteIntents = Array.isArray(input.tableWriteIntents) ? input.tableWriteIntents.map((x) => String(x).trim()).filter(Boolean).slice(0, 20) : [];
@@ -137,6 +144,7 @@ function normalizeIndexProfile(input = {}) {
     strategy,
     notes,
     tableDesign,
+    recommendedTableStructure,
     extractionMapping,
     domainLexiconRules,
     tableWriteIntents,
@@ -1306,6 +1314,11 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     indexOptions: { chunkSize: 1400, parallelWorkers: system.recommended.parallelWorkers, analysisEnabled: true, preferGpu: false },
     estimatedTime: 'Medium',
     tableDesign: ['document', 'chunk', 'keyword frequencies'],
+    recommendedTableStructure: [
+      { table: 'document', purpose: 'File-level metadata and provenance', keyFields: ['id','cacheId','filename','mimeType','wordCount','summary'] },
+      { table: 'chunk', purpose: 'Retrieval units for semantic matching', keyFields: ['id','cacheId','fileId','chunkIndex','text','charCount'] },
+      { table: 'keyword', purpose: 'High-signal terms for topic orientation', keyFields: ['cacheId','fileId','term','score','sourceChunk'] }
+    ],
     extractionMapping: ['raw text -> chunk.text', 'high-frequency terms -> keyword summary'],
     domainLexiconRules: topTerms,
     tableWriteIntents: ['document: metadata', 'chunk: retrieval text'],
@@ -1321,6 +1334,11 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     indexOptions: { chunkSize: 1800, parallelWorkers: system.recommended.parallelWorkers, analysisEnabled: true, preferGpu: false },
     estimatedTime: 'Medium',
     tableDesign: ['document', 'chunk', 'entity', 'event', 'relation', 'anomaly'],
+    recommendedTableStructure: [
+      { table: 'entity', purpose: 'Named domain objects (people/org/location/compound)', keyFields: ['id','cacheId','fileId','type','value','normalized','confidence'] },
+      { table: 'event', purpose: 'Quantified or timestamped changes', keyFields: ['id','cacheId','fileId','type','dates','rawAmount','confidence'] },
+      { table: 'relation', purpose: 'Connect entities/events with explainable edges', keyFields: ['id','cacheId','sourceType','sourceValue','targetType','targetValue','type','weight'] }
+    ],
     extractionMapping: ['domain nouns -> entity.value', 'time/quantity signals -> event', 'co-occurrence -> relation', 'risk flags -> anomaly'],
     domainLexiconRules: topTerms,
     tableWriteIntents: ['entity: named/domain concepts', 'event: measurable changes', 'relation: pair links', 'anomaly: unusual spikes'],
@@ -1336,6 +1354,11 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     indexOptions: { chunkSize: 1400, parallelWorkers: Math.max(1, system.recommended.parallelWorkers - 1), analysisEnabled: true, preferGpu: false },
     estimatedTime: 'High',
     tableDesign: ['document', 'chunk', 'entity', 'event', 'activity', 'intent', 'relation', 'anomaly', 'cluster labels'],
+    recommendedTableStructure: [
+      { table: 'activity', purpose: 'Who did what and when', keyFields: ['id','cacheId','actor','action','dates','locations','confidence'] },
+      { table: 'intent', purpose: 'Goal/hypothesis statements from text', keyFields: ['id','cacheId','type','evidence','confidence'] },
+      { table: 'anomaly', purpose: 'Contradiction or outlier candidates', keyFields: ['id','cacheId','type','severity','rationale','relatedEntities'] }
+    ],
     extractionMapping: ['actor/action phrases -> activity', 'intent language -> intent', 'entity graph density -> cluster labels'],
     domainLexiconRules: topTerms,
     tableWriteIntents: ['activity: who-did-what', 'intent: objective clues', 'relation: graph edges', 'cluster labels: communities'],
@@ -1378,6 +1401,7 @@ Return strict JSON array of 3 objects with keys:
 - indexOptions { chunkSize (300-8000), parallelWorkers (1-24), analysisEnabled (bool), preferGpu (bool) }
 - estimatedTime (Low|Medium|High)
 - tableDesign (array of table names/features)
+- recommendedTableStructure (array of objects: { table, purpose, keyFields[] })
 - extractionMapping (array of field mapping rules as plain strings; no objects)
 - domainLexiconRules (array of domain terms/rules as plain strings; no objects)
 - tableWriteIntents (array describing what is written to each table as plain strings; no objects)
@@ -1411,6 +1435,13 @@ Make options meaningfully different and practical.`;
         indexOptions: normalizeIndexOptions(p.indexOptions || {}),
         estimatedTime: String(p.estimatedTime || 'Medium'),
         tableDesign: Array.isArray(p.tableDesign) ? p.tableDesign.map((x) => asPlainText(x)).slice(0, 12) : [],
+        recommendedTableStructure: Array.isArray(p.recommendedTableStructure)
+          ? p.recommendedTableStructure.slice(0, 20).map((t) => ({
+            table: asPlainText(t?.table || ''),
+            purpose: asPlainText(t?.purpose || ''),
+            keyFields: Array.isArray(t?.keyFields) ? t.keyFields.map((f)=>asPlainText(f)).slice(0, 24) : []
+          }))
+          : [],
         extractionMapping: Array.isArray(p.extractionMapping) ? p.extractionMapping.map((x) => asPlainText(x)).slice(0, 12) : [],
         domainLexiconRules: Array.isArray(p.domainLexiconRules) ? p.domainLexiconRules.map((x) => asPlainText(x)).slice(0, 20) : [],
         tableWriteIntents: Array.isArray(p.tableWriteIntents) ? p.tableWriteIntents.map((x) => asPlainText(x)).slice(0, 12) : [],

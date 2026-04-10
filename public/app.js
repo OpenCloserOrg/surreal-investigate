@@ -69,6 +69,7 @@ function buildSurrealFormatProfile(profile = null){
     notes: $('index-strategy-notes').value.trim(),
     indexOptions: currentIndexOptions(),
     tableDesign: ['document','chunk','entity','event','activity','intent','relation','anomaly'],
+    recommendedTableStructure: [],
     extractionMapping: [],
     domainLexiconRules: [],
     tableWriteIntents: []
@@ -89,6 +90,7 @@ function buildSurrealFormatProfile(profile = null){
         extractionMapping: p.extractionMapping || [],
         domainLexiconRules: p.domainLexiconRules || [],
         tableWriteIntents: p.tableWriteIntents || [],
+        recommendedTableStructure: p.recommendedTableStructure || [],
         suppressions: p.suppressions || [],
         priorityRelationships: p.priorityRelationships || [],
         tableDesign: p.tableDesign || []
@@ -428,14 +430,14 @@ function renderFeaturePlans(plans = []) {
   const el = $('feature-plans');
   featurePlansState = Array.isArray(plans) ? plans : [];
   if (!featurePlansState.length) { el.innerHTML = ''; setSelectedPlanUI(-1); return; }
-  el.innerHTML = featurePlansState.map((p, idx)=>`<details class="feature-plan" ${idx===0?'open':''}><summary>${(p.tier||'Plan').replace(/</g,'&lt;')} — ${(p.name||'').replace(/</g,'&lt;')} ${selectedPlanIdx===idx?'✅':''}</summary><p class="muted">${String(p.explanation||'').replace(/</g,'&lt;')}</p><p><strong>Estimated indexing scope:</strong> ${p.estimatedTime || 'n/a'}</p><p><strong>Example question:</strong> ${String(p.exampleQuestion||'').replace(/</g,'&lt;')}</p><p><strong>Extraction mapping:</strong> ${(p.extractionMapping||[]).slice(0,3).map((x)=>String(x).replace(/</g,'&lt;')).join(' • ') || 'n/a'}</p><p><strong>Domain lexicon:</strong> ${(p.domainLexiconRules||[]).slice(0,8).map((x)=>String(x).replace(/</g,'&lt;')).join(', ') || 'n/a'}</p><p><strong>Suppressions:</strong> ${(p.suppressions||[]).slice(0,6).map((x)=>String(x).replace(/</g,'&lt;')).join(', ') || 'none'}</p><p><strong>Priority relationships:</strong> ${(p.priorityRelationships||[]).slice(0,4).map((x)=>String(x).replace(/</g,'&lt;')).join(' • ') || 'n/a'}</p><ul>${(p.tableWriteIntents||p.tableDesign||[]).map((t)=>`<li>${String(t).replace(/</g,'&lt;')}</li>`).join('')}</ul><div class="row"><button class="use-plan" data-plan-idx="${idx}">${selectedPlanIdx===idx?'Selected ✅':'Use This Feature Plan'}</button><button class="view-plan" data-plan-idx="${idx}">See Surreal Format</button></div></details>`).join('');
+  el.innerHTML = featurePlansState.map((p, idx)=>`<details class="feature-plan" ${idx===0?'open':''}><summary>${(p.tier||'Plan').replace(/</g,'&lt;')} — ${(p.name||'').replace(/</g,'&lt;')} ${selectedPlanIdx===idx?'✅':''}</summary><p class="muted">${String(p.explanation||'').replace(/</g,'&lt;')}</p><p><strong>Estimated indexing scope:</strong> ${p.estimatedTime || 'n/a'}</p><p><strong>Example question:</strong> ${String(p.exampleQuestion||'').replace(/</g,'&lt;')}</p><p><strong>Extraction mapping:</strong> ${(p.extractionMapping||[]).slice(0,3).map((x)=>String(x).replace(/</g,'&lt;')).join(' • ') || 'n/a'}</p><p><strong>Domain lexicon:</strong> ${(p.domainLexiconRules||[]).slice(0,8).map((x)=>String(x).replace(/</g,'&lt;')).join(', ') || 'n/a'}</p><p><strong>Suppressions:</strong> ${(p.suppressions||[]).slice(0,6).map((x)=>String(x).replace(/</g,'&lt;')).join(', ') || 'none'}</p><p><strong>Priority relationships:</strong> ${(p.priorityRelationships||[]).slice(0,4).map((x)=>String(x).replace(/</g,'&lt;')).join(' • ') || 'n/a'}</p><p><strong>Recommended table structure:</strong></p><ul>${(p.recommendedTableStructure||[]).slice(0,6).map((t)=>`<li><strong>${String(t.table||'table').replace(/</g,'&lt;')}</strong> — ${String(t.purpose||'').replace(/</g,'&lt;')}<br/><span class="muted">${(t.keyFields||[]).slice(0,10).map((f)=>String(f).replace(/</g,'&lt;')).join(', ')}</span></li>`).join('') || '<li>n/a</li>'}</ul><ul>${(p.tableWriteIntents||p.tableDesign||[]).map((t)=>`<li>${String(t).replace(/</g,'&lt;')}</li>`).join('')}</ul><div class="row"><button class="use-plan" data-plan-idx="${idx}">${selectedPlanIdx===idx?'Selected ✅':'Use This Feature Plan'}</button><button class="view-plan" data-plan-idx="${idx}">See Surreal Format</button></div></details>`).join('');
   setSelectedPlanUI(selectedPlanIdx);
   el.querySelectorAll('.view-plan').forEach((btn)=>btn.onclick=()=>{ const p=featurePlansState[Number(btn.getAttribute('data-plan-idx'))]; showTraceModal('Surreal Format Preview', buildSurrealFormatProfile(p)); });
   el.querySelectorAll('.use-plan').forEach((btn)=>btn.onclick=async()=>{
     const idx = Number(btn.getAttribute('data-plan-idx'));
     const p=featurePlansState[idx];
     if(!p) return;
-    const profile = { id:`plan-${Date.now()}`, name:p.name||p.tier||'Feature Plan', strategy:p.strategy||'custom', notes:p.explanation||'', tableDesign:p.tableDesign||[], extractionMapping:p.extractionMapping||[], domainLexiconRules:p.domainLexiconRules||[], tableWriteIntents:p.tableWriteIntents||[], suppressions:p.suppressions||[], priorityRelationships:p.priorityRelationships||[], indexOptions:p.indexOptions||currentIndexOptions(), examples:[{table:'entity',data:{type:'example',value:'...'}},{table:'relation',data:{type:'cooccurrence',sourceValue:'A',targetValue:'B'}}] };
+    const profile = { id:`plan-${Date.now()}`, name:p.name||p.tier||'Feature Plan', strategy:p.strategy||'custom', notes:p.explanation||'', tableDesign:p.tableDesign||[], recommendedTableStructure:p.recommendedTableStructure||[], extractionMapping:p.extractionMapping||[], domainLexiconRules:p.domainLexiconRules||[], tableWriteIntents:p.tableWriteIntents||[], suppressions:p.suppressions||[], priorityRelationships:p.priorityRelationships||[], indexOptions:p.indexOptions||currentIndexOptions(), examples:[{table:'entity',data:{type:'example',value:'...'}},{table:'relation',data:{type:'cooccurrence',sourceValue:'A',targetValue:'B'}}] };
     applyProfile(profile);
     setSelectedPlanUI(idx);
     const cacheId = selectedCacheId();
