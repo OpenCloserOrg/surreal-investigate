@@ -314,6 +314,50 @@ app.get('/api/index-data-export/:cacheId', async (req, res) => {
   }
 });
 
+app.post('/api/index-diagnose/:cacheId', async (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const apiKey = String(req.body?.openRouterKey || '').trim() || AI_API_KEY;
+  const model = String(req.body?.model || '').trim() || AI_MODEL;
+  const data = readCaches();
+  const cache = findCache(data, cacheId);
+  if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
+
+  const stats = cache.indexStats || {};
+  const low = (Number(stats.entityCount||0) + Number(stats.eventCount||0) + Number(stats.activityCount||0)) === 0;
+  const files = (cache.files || []).slice(0,3);
+  const snippets = [];
+  for (const f of files) {
+    try {
+      const absPath = f.absPath || (f.path ? path.join(ROOT, f.path) : '');
+      if (!absPath || !fs.existsSync(absPath)) continue;
+      const extracted = await extractTextFromFile(absPath, f.originalName || path.basename(absPath));
+      snippets.push({ filename: f.originalName, method: extracted.method, sample: String(extracted.text||'').split(/\s+/).slice(0,140).join(' ') });
+    } catch {}
+  }
+
+  if (!apiKey) {
+    return res.json({ ok: true, lowExtraction: low, summary: low ? 'Structured extraction is empty. Try Main intent + detected recipe defaults and re-index.' : 'Structured extraction appears present.', hints: ['Use detected recipe defaults', 'Choose main intent before generating feature plans', 'Verify extracted chars > 0 for each file'], snippets });
+  }
+
+  try {
+    const prompt = `You are debugging SurrealDB investigative indexing quality.
+Cache stats: ${JSON.stringify(stats)}
+Snippets: ${JSON.stringify(snippets)}
+Explain likely causes of zero entities/events/activities and provide concrete fixes in bullet points.
+Also briefly explain how Surreal precheck/retrieval/useful tables work.
+Return JSON with keys: summary, causes(array), fixes(array), surrealExplanation.`;
+    const payload = { model, messages: [{ role: 'user', content: prompt }], temperature: 0.2 };
+    const r = await fetch(AI_PROVIDER_URL, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const j = await r.json();
+    const raw = String(j?.choices?.[0]?.message?.content || '').trim();
+    let parsed = null;
+    try { parsed = JSON.parse(raw.replace(/^```json/i,'').replace(/```$/i,'').trim()); } catch {}
+    return res.json({ ok: true, lowExtraction: low, ...(parsed || { summary: raw.slice(0,500) }), requestPreview: { method: 'POST', url: AI_PROVIDER_URL, headers: { Authorization: `Bearer ${maskKey(apiKey)}` }, body: payload } });
+  } catch (error) {
+    return res.json({ ok: true, lowExtraction: low, summary: `Diagnosis fallback: ${error.message||'unknown error'}`, snippets });
+  }
+});
+
 app.get('/api/index-manifest/:cacheId', (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
   const manifestPath = path.join(INDEXES_DIR, cacheId, 'manifest.json');

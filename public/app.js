@@ -93,6 +93,15 @@ function setProgress(v=0){ $('index-progress').style.width = `${Math.max(0, Math
 function relTime(iso=''){ const d=new Date(iso); const s=Math.floor((Date.now()-d.getTime())/1000); if(!iso||Number.isNaN(d.getTime())) return ''; if(s<60) return `${s}s ago`; if(s<3600) return `${Math.floor(s/60)}m ago`; if(s<86400) return `${Math.floor(s/3600)}h ago`; return `${Math.floor(s/86400)}d ago`; }
 function scrollToSection(id){ const el=$(id); if(el) el.scrollIntoView({ behavior:'smooth', block:'start' }); }
 
+function evaluateIndexHealth(stats = {}){
+  const entities = Number(stats.entityCount || 0);
+  const events = Number(stats.eventCount || 0);
+  const activities = Number(stats.activityCount || 0);
+  const low = entities === 0 && events === 0 && activities === 0;
+  $('index-health-warning').style.display = low ? 'block' : 'none';
+  return low;
+}
+
 function updateAskArtifactInfo(){
   if (!currentCache?.id) { $('ask-index-artifact').textContent = 'No index artifact selected yet.'; return; }
   const ready = currentCache?.readyForQuestions;
@@ -486,6 +495,19 @@ $('redo-index-flow').onclick = ()=> scrollToSection('section-index');
 
 $('regenerate-summary').onclick = async ()=>{ const cacheId = selectedCacheId(); if(!cacheId) return notifyBlocked('index'); await runQuickSummary(cacheId, true); };
 
+$('index-fix-help').onclick = async ()=>{
+  const cacheId = selectedCacheId(); if(!cacheId) return notifyBlocked('index');
+  $('index-health-warning').innerHTML = '⚠ Diagnosing extraction quality (may take 2–3 minutes)...';
+  const r = await fetch(`/api/index-diagnose/${cacheId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ...aiCredPayload() }) });
+  const j = await r.json();
+  if (!r.ok || !j.ok) { $('index-health-warning').innerHTML = `⚠ Diagnosis failed: ${j.error||'unknown'}`; return; }
+  $('index-health-warning').innerHTML = `⚠ ${j.summary || 'Diagnosis complete.'} <button id="index-fix-help" class="sugg-btn" style="margin-left:8px">How can I fix this?</button>`;
+  $('index-log').textContent += `\n\nExtraction diagnosis:\n${JSON.stringify(j, null, 2)}`;
+  $('index-fix-help').onclick = async ()=>{
+    $('index-log').textContent += '\n\nTip: re-run indexing after applying recommended feature-plan suppressions and intent.';
+  };
+};
+
 $('query-strategy-help').onclick = ()=>showTraceModal('Query Strategy Modes', {
   balanced: 'Default mix of relevant chunk retrieval + structured Surreal tables.',
   'broad-discovery': 'Wider retrieval scope for exploration; may include weaker matches.',
@@ -638,7 +660,9 @@ $('index-btn').onclick=async()=>{
   if(!r.ok){ setProgress(0); $('index-estimate').textContent = 'Index failed.'; $('index-log').textContent=(j.logs||[]).map(x=>`- ${x.message}`).join('\n') + `\nERROR: ${j.error}`; await fetchCaches(); return; }
   setProgress(100);
   $('index-estimate').textContent = j.reusedExisting ? 'Loaded existing index (no re-scan).' : 'Index complete.';
-  $('index-log').textContent=(j.manifest.logs||[]).map(x=>`- ${x.message}`).join('\n') + `${j.manifest.summary ? `\n\nSummary:\n${j.manifest.summary}` : ''}` + `\n\nHow indexing works:\n${(j.manifest.indexingExplanation||[]).map(s=>`- ${s}`).join('\n')}\n\nDONE: docs=${j.manifest.stats.documentCount} chunks=${j.manifest.stats.chunkCount} entities=${j.manifest.stats.entityCount||0} events=${j.manifest.stats.eventCount||0} activities=${j.manifest.stats.activityCount||0} intents=${j.manifest.stats.intentCount||0}${j.reusedExisting ? '\n(Loaded existing index; no re-scan performed.)' : ''}`;
+  const usedChunk = j?.manifest?.options?.indexOptions?.chunkSize || profilePayload?.indexOptions?.chunkSize || 1400;
+  $('index-log').textContent=(j.manifest.logs||[]).map(x=>`- ${x.message}`).join('\n') + `${j.manifest.summary ? `\n\nSummary:\n${j.manifest.summary}` : ''}` + `\n\nHow indexing works:\n${(j.manifest.indexingExplanation||[]).map(s=>`- ${s}`).join('\n')}\n\nDONE: docs=${j.manifest.stats.documentCount} chunks=${j.manifest.stats.chunkCount} chunkSize=${usedChunk} entities=${j.manifest.stats.entityCount||0} events=${j.manifest.stats.eventCount||0} activities=${j.manifest.stats.activityCount||0} intents=${j.manifest.stats.intentCount||0}${j.reusedExisting ? '\n(Loaded existing index; no re-scan performed.)' : ''}`;
+  evaluateIndexHealth(j.manifest.stats || {});
   await fetchCaches();
 };
 
