@@ -203,6 +203,7 @@ function applyGateState(){
   $('view-schema').disabled = !hasCacheSelected;
   $('download-manifest').disabled = !hasCacheSelected;
   $('download-index-data').disabled = !hasCacheSelected;
+  $('configure-openclaw').disabled = !hasCacheSelected;
   $('query-mode').disabled = !hasCacheSelected || !isIndexed;
   $('query-strategy').disabled = !hasCacheSelected || !isIndexed;
   $('query-strategy-notes').disabled = !hasCacheSelected || !isIndexed;
@@ -565,6 +566,22 @@ $('download-index-data').onclick = async ()=>{
   a.download = `${cacheId}-index-data.json`;
   a.click();
   URL.revokeObjectURL(url);
+};
+$('configure-openclaw').onclick = async ()=>{
+  const cacheId = selectedCacheId();
+  if (!cacheId) return notifyBlocked('ask');
+  $('query-status').textContent = 'Preparing OpenCLAW configuration package...';
+  const r = await fetch(`/api/openclaw-skill/${cacheId}`);
+  const j = await r.json();
+  if (!r.ok || !j.ok) { $('query-status').textContent = `OpenCLAW config failed: ${j.error||'unknown'}`; return; }
+  const blob = new Blob([j.generatedGuide || JSON.stringify(j, null, 2)], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${cacheId}-openclaw-setup.md`;
+  a.click();
+  URL.revokeObjectURL(url);
+  $('query-status').textContent = 'OpenCLAW setup guide downloaded.';
 };
 $('redo-index-flow').onclick = ()=> scrollToSection('section-index');
 

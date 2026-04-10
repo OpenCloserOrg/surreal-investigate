@@ -10,6 +10,8 @@ Use it to turn mixed documents/spreadsheets/logs into durable structured memory 
 
 Current AI provider path: **OpenRouter** (single endpoint, multi-model routing for easy model comparisons). More providers (OpenAI/Anthropic/Together/local) are planned.
 
+OpenCLAW operator skill bundle is included under `openclaw/` for agent-driven operation of this project.
+
 When fully running, you can:
 1. Create a cache (dataset workspace)
 2. Upload files (or load sample fixture)

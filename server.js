@@ -361,6 +361,38 @@ If current schema cannot answer precisely, set needsRemodel=true and provide con
   }
 });
 
+app.get('/api/openclaw-skill/:cacheId', async (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const data = readCaches();
+  const cache = findCache(data, cacheId);
+  if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
+
+  const appBase = `http://localhost:${PORT}`;
+  const surrealRuntime = {
+    url: surrealConfig.url,
+    namespace: surrealConfig.namespace,
+    database: surrealConfig.database,
+    cwd: ROOT,
+    likelyDataPath: path.join(ROOT, 'data', 'surreal.db')
+  };
+
+  const skillText = `# OpenCLAW Surreal Investigate quick-setup\n\nCache: ${cacheId}\nApp: ${appBase}\n\nSurreal runtime:\n- URL: ${surrealRuntime.url}\n- NS/DB: ${surrealRuntime.namespace}/${surrealRuntime.database}\n- CWD: ${surrealRuntime.cwd}\n- Likely KV path: ${surrealRuntime.likelyDataPath}\n\nWorkflow:\n1) POST /api/caches\n2) POST /api/upload\n3) POST /api/cache-quick-summary/:cacheId\n4) POST /api/index/feature-plans/:cacheId\n5) POST /api/index/:cacheId\n6) POST /api/query/:cacheId\n\nUse /api/schema/:cacheId and /api/convert-surrealql/:cacheId for schema-aware query conversion.\nIf extraction is weak, run /api/index-diagnose/:cacheId and re-index with custom strategy notes.`;
+
+  return res.json({
+    ok: true,
+    cacheId,
+    appBase,
+    surrealRuntime,
+    skillPath: 'openclaw/SKILL.md',
+    references: [
+      'openclaw/references/api-cookbook.md',
+      'openclaw/references/surrealql-examples.md',
+      'openclaw/references/troubleshooting.md'
+    ],
+    generatedGuide: skillText
+  });
+});
+
 app.get('/api/index-data-export/:cacheId', async (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
   try {
