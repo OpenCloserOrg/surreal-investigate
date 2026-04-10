@@ -939,6 +939,31 @@ app.post('/api/cache-quick-summary/:cacheId', async (req, res) => {
   if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
 
   const files = (cache.files || []).slice(-6);
+
+  // Backfill summary extraction for older caches that were uploaded before samplePreview/extractedWords existed.
+  let mutated = false;
+  for (const f of files) {
+    const hasPreview = String(f.samplePreview || '').trim().length > 0;
+    const hasStats = Number(f.extractedWords || 0) > 0 || Number(f.extractedChars || 0) > 0;
+    if (hasPreview && hasStats) continue;
+    try {
+      const absPath = f.absPath || (f.path ? path.join(ROOT, f.path) : '');
+      if (!absPath || !fs.existsSync(absPath)) continue;
+      const extracted = await extractTextFromFile(absPath, f.originalName || path.basename(absPath));
+      const text = String(extracted.text || '');
+      const words = text.split(/\s+/).filter(Boolean);
+      f.samplePreview = text.slice(0, 220);
+      f.extractedWords = words.length;
+      f.extractedChars = text.length;
+      f.extractionMethod = extracted.method || f.extractionMethod || 'unknown';
+      mutated = true;
+    } catch {}
+  }
+  if (mutated) {
+    cache.updatedAt = new Date().toISOString();
+    writeCaches(data);
+  }
+
   const snippets = files.map((f) => ({
     filename: f.originalName,
     extractedWords: Number(f.extractedWords || 0),
