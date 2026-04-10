@@ -837,11 +837,12 @@ app.post('/api/query/:cacheId', async (req, res) => {
         return s;
       };
 
+      const chunkLimit = queryStrategy === 'broad-discovery' ? 24 : (queryStrategy === 'high-precision' ? 8 : 16);
       let chunks = allChunks
         .map((c) => ({ ...c, score: scoreText(c.text) }))
         .filter((c) => c.score > 0)
         .sort((a, b) => b.score - a.score)
-        .slice(0, 8);
+        .slice(0, chunkLimit);
       if (!chunks.length && allChunks.length) {
         chunks = allChunks.slice(0, 3).map((c) => ({ ...c, score: 0 }));
       }
@@ -897,8 +898,12 @@ app.post('/api/query/:cacheId', async (req, res) => {
         `Anomalies: ${retrieval.anomalies.length}`,
         `Relations: ${retrieval.relations.length}`
       ].join(' | ');
+      const wantsCountries = /\bcountries?\b|\bcountry\b|\bnations?\b/i.test(question);
+      const locationEntities = retrieval.entities.filter((e)=>String(e.type||'').includes('location')).map((e)=>e.value).filter(Boolean);
+      const uniqueLocations = [...new Set(locationEntities)].slice(0, 60);
+      const chunkPreview = chunks.slice(0, 8).map((c, i) => `#${i + 1} ${c.filename} [${c.chunkIndex}] ${String(c.text || '').slice(0, 180).replace(/\s+/g,' ')}`).join('\n');
       const answer = chunks.length || retrieval.entities.length || retrieval.events.length || retrieval.activities.length || retrieval.intents.length || retrieval.anomalies.length
-        ? `Found structured matches. ${summary}`
+        ? `Found structured matches. ${summary}${wantsCountries ? `\n\nCountries/locations detected (${uniqueLocations.length}): ${uniqueLocations.join(', ') || 'none'}` : ''}\n\nTop chunk excerpts:\n${chunkPreview || 'none'}`
         : 'No matching chunks or structured findings found in Surreal index.';
       appendChatLog(cacheId, chatId, { role: 'user', mode, queryStrategy, content: question });
       appendChatLog(cacheId, chatId, { role: 'assistant', mode, queryStrategy, content: answer, evidenceCount: chunks.length });
