@@ -108,6 +108,20 @@ function normalizeIndexOptions(input = {}) {
   };
 }
 
+function asPlainText(v) {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+function maskKey(key = '') {
+  const v = String(key || '').trim();
+  if (!v) return '';
+  if (v.length <= 10) return `${v.slice(0, 2)}***`;
+  return `${v.slice(0, 6)}***${v.slice(-4)}`;
+}
+
 function normalizeIndexProfile(input = {}) {
   const strategy = String(input.strategy || 'investigation-default').trim() || 'investigation-default';
   const name = String(input.name || strategy).trim().slice(0, 120);
@@ -1130,9 +1144,9 @@ Return strict JSON array of 3 objects with keys:
 - indexOptions { chunkSize (300-8000), parallelWorkers (1-24), analysisEnabled (bool), preferGpu (bool) }
 - estimatedTime (Low|Medium|High)
 - tableDesign (array of table names/features)
-- extractionMapping (array of field mapping rules)
-- domainLexiconRules (array of domain terms/rules)
-- tableWriteIntents (array describing what is written to each table)
+- extractionMapping (array of field mapping rules as plain strings; no objects)
+- domainLexiconRules (array of domain terms/rules as plain strings; no objects)
+- tableWriteIntents (array describing what is written to each table as plain strings; no objects)
 - exampleQuestion
 Critical constraints:
 - Be intent-driven and file-driven from the sample.
@@ -1158,15 +1172,15 @@ Make options meaningfully different and practical.`;
         strategy: String(p.strategy || 'custom'),
         indexOptions: normalizeIndexOptions(p.indexOptions || {}),
         estimatedTime: String(p.estimatedTime || 'Medium'),
-        tableDesign: Array.isArray(p.tableDesign) ? p.tableDesign.map((x) => String(x)).slice(0, 12) : [],
-        extractionMapping: Array.isArray(p.extractionMapping) ? p.extractionMapping.map((x) => String(x)).slice(0, 12) : [],
-        domainLexiconRules: Array.isArray(p.domainLexiconRules) ? p.domainLexiconRules.map((x) => String(x)).slice(0, 20) : [],
-        tableWriteIntents: Array.isArray(p.tableWriteIntents) ? p.tableWriteIntents.map((x) => String(x)).slice(0, 12) : [],
+        tableDesign: Array.isArray(p.tableDesign) ? p.tableDesign.map((x) => asPlainText(x)).slice(0, 12) : [],
+        extractionMapping: Array.isArray(p.extractionMapping) ? p.extractionMapping.map((x) => asPlainText(x)).slice(0, 12) : [],
+        domainLexiconRules: Array.isArray(p.domainLexiconRules) ? p.domainLexiconRules.map((x) => asPlainText(x)).slice(0, 20) : [],
+        tableWriteIntents: Array.isArray(p.tableWriteIntents) ? p.tableWriteIntents.map((x) => asPlainText(x)).slice(0, 12) : [],
         exampleQuestion: String(p.exampleQuestion || '')
       }));
-      return res.json({ ok: true, source: 'ai', plans: cleaned, sampleWordCount, sampleSummary, requestPreview: { ...basePreview, prompt, payload: aiPayload } });
+      return res.json({ ok: true, source: 'ai', plans: cleaned, sampleWordCount, sampleSummary, requestPreview: { ...basePreview, prompt, payload: aiPayload, outboundRequest: { method: 'POST', url: AI_PROVIDER_URL, headers: { Authorization: `Bearer ${maskKey(openRouterKey)}`, 'Content-Type': 'application/json' }, body: aiPayload } } });
     }
-    return res.json({ ok: true, source: 'heuristic-fallback', plans: heuristicPlans, sampleWordCount, sampleSummary, requestPreview: { ...basePreview, prompt, payload: aiPayload, aiRawPreview: raw.slice(0, 500) } });
+    return res.json({ ok: true, source: 'heuristic-fallback', plans: heuristicPlans, sampleWordCount, sampleSummary, requestPreview: { ...basePreview, prompt, payload: aiPayload, aiRawPreview: raw.slice(0, 500), outboundRequest: { method: 'POST', url: AI_PROVIDER_URL, headers: { Authorization: `Bearer ${maskKey(openRouterKey)}`, 'Content-Type': 'application/json' }, body: aiPayload } } });
   } catch (error) {
     return res.json({ ok: true, source: 'heuristic-error-fallback', plans: heuristicPlans, sampleWordCount, sampleSummary, requestPreview: { ...basePreview, error: error.message || 'unknown' } });
   }

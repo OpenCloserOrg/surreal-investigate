@@ -259,12 +259,13 @@ $('generate-feature-plans').onclick = async ()=>{
   $('feature-plan-status').innerHTML = '<span class="spinner"></span>Generating feature plans (can take up to 1–2 minutes)...';
   const goal = $('feature-goal').value.trim();
   const reqBody = { goal, ...aiCredPayload() };
+  const safeBody = { ...reqBody, openRouterKey: reqBody.openRouterKey ? `${String(reqBody.openRouterKey).slice(0,6)}***${String(reqBody.openRouterKey).slice(-4)}` : undefined };
   const reqPreview = {
     request: {
       method: 'POST',
       url: `/api/index/feature-plans/${cacheId}`,
       headers: { 'Content-Type': 'application/json' },
-      body: reqBody
+      body: safeBody
     },
     note: 'Request dispatched. Waiting for server response...'
   };
