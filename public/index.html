@@ -76,6 +76,12 @@
         <button id="use-recommended" disabled>Use Recommended</button>
       </div>
       <p class="muted" id="index-recommendation">No recommendation loaded yet.</p>
+      <div class="row">
+        <input id="feature-goal" placeholder="What do you want to figure out? (e.g., correlated ship routes)" style="min-width:320px;flex:1" />
+        <button id="generate-feature-plans">Generate 3 Feature Plans</button>
+      </div>
+      <p class="muted" id="feature-plan-status">No feature plans generated yet.</p>
+      <div id="feature-plans"></div>
       <div class="progress-wrap"><div id="index-progress" class="progress"></div></div>
       <p>SurrealDB: <span id="surreal-dot" class="dot red"></span> <span id="surreal-status">Not checked</span></p>
       <p class="muted" id="index-estimate">No active indexing job.</p>

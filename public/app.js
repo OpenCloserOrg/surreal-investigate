@@ -72,6 +72,20 @@ $('use-recommended').onclick = ()=>{
   renderTuningLabels();
 };
 
+$('generate-feature-plans').onclick = async ()=>{
+  const cacheId = selectedCacheId(); if(!cacheId) return;
+  $('feature-plan-status').textContent = 'Generating feature plans...';
+  const goal = $('feature-goal').value.trim();
+  const r = await fetch(`/api/index/feature-plans/${cacheId}`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ goal, openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() })
+  });
+  const j = await r.json();
+  if (!r.ok || !j.ok) { $('feature-plan-status').textContent = `Feature planning failed: ${j.error||'unknown'}`; return; }
+  renderFeaturePlans(j.plans || []);
+  $('feature-plan-status').textContent = `Generated ${j.plans?.length||0} plans (${j.source}). Sampled ${j.sampleWordCount||0} words.`;
+};
+
 function renderThread(messages=[]){
   const el = $('chat-thread');
   el.innerHTML = messages.map((m)=>`<div class="msg ${m.role==='user'?'user':'assistant'}"><div class="meta">${m.role||'msg'} • ${relTime(m.at||'')}</div><div>${String(m.content||'').replace(/</g,'&lt;')}</div></div>`).join('') || '<p class="muted">No messages yet in this chat.</p>';
@@ -85,6 +99,12 @@ function renderSuggestions(list = []) {
   el.querySelectorAll('button[data-q]').forEach((btn) => {
     btn.onclick = () => { $('question').value = btn.getAttribute('data-q') || ''; $('question').focus(); };
   });
+}
+
+function renderFeaturePlans(plans = []) {
+  const el = $('feature-plans');
+  if (!Array.isArray(plans) || !plans.length) { el.innerHTML = ''; return; }
+  el.innerHTML = plans.map((p, idx)=>`<details class="feature-plan" ${idx===0?'open':''}><summary>${(p.tier||'Plan').replace(/</g,'&lt;')} — ${(p.name||'').replace(/</g,'&lt;')}</summary><p class="muted">${String(p.explanation||'').replace(/</g,'&lt;')}</p><p><strong>Index options:</strong> chunk ${p.indexOptions?.chunkSize||1400}, workers ${p.indexOptions?.parallelWorkers||1}, analysis ${p.indexOptions?.analysisEnabled===false?'off':'on'}</p><p><strong>Estimated indexing:</strong> ${p.estimatedTime || 'n/a'}</p><p><strong>Example question:</strong> ${String(p.exampleQuestion||'').replace(/</g,'&lt;')}</p><ul>${(p.tableDesign||[]).map((t)=>`<li>${String(t).replace(/</g,'&lt;')}</li>`).join('')}</ul></details>`).join('');
 }
 
 async function loadChatMessages(){

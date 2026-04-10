@@ -804,6 +804,102 @@ Return:
   }
 });
 
+app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const goal = String(req.body?.goal || '').trim() || 'Find patterns, relationships, and anomalies in this dataset';
+  const openRouterKey = String(req.body?.openRouterKey || '').trim();
+  const model = String(req.body?.model || '').trim() || 'openai/gpt-4o-mini';
+  const data = readCaches();
+  const cache = findCache(data, cacheId);
+  if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
+
+  const files = (cache.files || []).filter((f) => f.absPath && fs.existsSync(f.absPath));
+  const fileList = files.slice(0, 8).map((f) => `${f.originalName} (${f.size} bytes)`).join('\n');
+  let sampleText = '';
+  for (const f of files.slice(0, 3)) {
+    try {
+      const extracted = await extractTextFromFile(f.absPath, f.originalName);
+      const words = String(extracted.text || '').split(/\s+/).filter(Boolean).slice(0, 500);
+      if (words.length) { sampleText = words.join(' '); break; }
+    } catch {}
+  }
+  const sampleWordCount = sampleText ? sampleText.split(/\s+/).filter(Boolean).length : 0;
+
+  const system = computeSystemProfile();
+  const quick = {
+    tier: 'Fast',
+    name: 'Quick scan',
+    explanation: 'Fastest pass for initial orientation and rough retrieval.',
+    indexOptions: { chunkSize: 2400, parallelWorkers: Math.max(1, Math.min(8, system.recommended.parallelWorkers + 1)), analysisEnabled: false, preferGpu: false },
+    estimatedTime: 'Low',
+    tableDesign: ['document', 'chunk'],
+    exampleQuestion: `What are the highest-frequency recurring terms related to: ${goal}?`
+  };
+  const balanced = {
+    tier: 'Balanced',
+    name: 'Investigation default',
+    explanation: 'Good tradeoff between indexing time and relationship discovery.',
+    indexOptions: { chunkSize: 1800, parallelWorkers: system.recommended.parallelWorkers, analysisEnabled: true, preferGpu: false },
+    estimatedTime: 'Medium',
+    tableDesign: ['document', 'chunk', 'entity', 'event', 'relation', 'anomaly'],
+    exampleQuestion: `Which entities and events are most correlated with: ${goal}?`
+  };
+  const hardcore = {
+    tier: 'Hardcore',
+    name: 'Deep graph',
+    explanation: 'Most robust structure for route-clustering and relationship mapping.',
+    indexOptions: { chunkSize: 1400, parallelWorkers: Math.max(1, system.recommended.parallelWorkers - 1), analysisEnabled: true, preferGpu: false },
+    estimatedTime: 'High',
+    tableDesign: ['document', 'chunk', 'entity', 'event', 'activity', 'intent', 'relation', 'anomaly'],
+    exampleQuestion: `Show the largest clusters and nearest-neighbor movement correlations for: ${goal}.`
+  };
+  const heuristicPlans = [quick, balanced, hardcore];
+
+  if (!openRouterKey) return res.json({ ok: true, source: 'heuristic', plans: heuristicPlans, sampleWordCount });
+
+  try {
+    const prompt = `You are designing indexing feature plans for a SurrealDB investigative app.
+Create exactly 3 options: Fast, Balanced, Hardcore.
+User goal: ${goal}
+Files:\n${fileList || 'none'}
+Data sample (max 500 words):\n${sampleText || 'no sample extracted'}
+Return strict JSON array of 3 objects with keys:
+- tier (Fast|Balanced|Hardcore)
+- name
+- explanation
+- indexOptions { chunkSize (300-8000), parallelWorkers (1-24), analysisEnabled (bool), preferGpu (bool) }
+- estimatedTime (Low|Medium|High)
+- tableDesign (array of table names/features)
+- exampleQuestion
+Make options meaningfully different and practical.`;
+
+    const aiResp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${openRouterKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.2 })
+    });
+    const aiJson = await aiResp.json();
+    const raw = String(aiJson?.choices?.[0]?.message?.content || '').trim();
+    let parsed = null;
+    try { parsed = JSON.parse(raw.replace(/^```json/i, '').replace(/```$/i, '').trim()); } catch {}
+    if (Array.isArray(parsed) && parsed.length >= 3) {
+      const cleaned = parsed.slice(0, 3).map((p) => ({
+        tier: String(p.tier || ''),
+        name: String(p.name || ''),
+        explanation: String(p.explanation || ''),
+        indexOptions: normalizeIndexOptions(p.indexOptions || {}),
+        estimatedTime: String(p.estimatedTime || 'Medium'),
+        tableDesign: Array.isArray(p.tableDesign) ? p.tableDesign.map((x) => String(x)).slice(0, 12) : [],
+        exampleQuestion: String(p.exampleQuestion || '')
+      }));
+      return res.json({ ok: true, source: 'ai', plans: cleaned, sampleWordCount });
+    }
+    return res.json({ ok: true, source: 'heuristic-fallback', plans: heuristicPlans, sampleWordCount });
+  } catch {
+    return res.json({ ok: true, source: 'heuristic-error-fallback', plans: heuristicPlans, sampleWordCount });
+  }
+});
+
 app.post('/api/index/strategy-suggest/:cacheId', async (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
   const mode = String(req.body?.mode || 'heuristic').trim();

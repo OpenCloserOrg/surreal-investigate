@@ -22,3 +22,7 @@ input[type="range"]{width:100%}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
 .modal.hidden{display:none}
 .modal-card{width:min(920px,95vw);max-height:85vh;overflow:auto;background:#121820;border:1px solid #2a3140;border-radius:12px;padding:12px}
+.feature-plan{background:#0f161f;border:1px solid #2b3a4b;border-radius:10px;padding:10px;margin:8px 0}
+.feature-plan summary{cursor:pointer;font-weight:600}
+.feature-plan .muted{margin:6px 0}
+.feature-plan ul{margin:8px 0 0 18px}
