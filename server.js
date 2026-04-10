@@ -959,18 +959,32 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
 
   const files = (cache.files || []).filter((f) => f.absPath && fs.existsSync(f.absPath));
   const fileList = files.slice(0, 8).map((f) => `${f.originalName} (${f.size} bytes)`).join('\n');
-  const sampledParts = [];
+  const allWords = [];
   for (const f of files.slice(0, 4)) {
     try {
       const extracted = await extractTextFromFile(f.absPath, f.originalName);
-      const words = String(extracted.text || '').split(/\s+/).filter(Boolean).slice(0, 120);
-      if (words.length) sampledParts.push(words.join(' '));
+      const words = String(extracted.text || '').split(/\s+/).filter(Boolean);
+      if (words.length) allWords.push(...words);
     } catch {}
   }
-  const mergedWords = sampledParts.join(' ').split(/\s+/).filter(Boolean).slice(0, 200);
-  const sampleText = mergedWords.join(' ').trim();
-  const sampleWordCount = mergedWords.length;
-  const sampleSummary = sampleWordCount ? `Sample summary: ${mergedWords.slice(0, 45).join(' ')}...` : '';
+
+  const totalWords = allWords.length;
+  const pickChunk = (start, size = 100) => allWords.slice(Math.max(0, start), Math.max(0, start) + size).join(' ').trim();
+  const chunkBegin = pickChunk(0, 100);
+  const chunkMiddleA = totalWords > 300 ? pickChunk(Math.floor(totalWords * 0.45), 100) : '';
+  const chunkMiddleB = totalWords > 450 ? pickChunk(Math.floor(totalWords * 0.65), 100) : '';
+  const chunkEnd = totalWords > 200 ? pickChunk(Math.max(0, totalWords - 100), 100) : '';
+  const sampleChunks = [
+    { label: 'chunk-1-beginning', deterministic: true, text: chunkBegin },
+    { label: 'chunk-2-middle', deterministic: true, text: chunkMiddleA },
+    { label: 'chunk-3-middle', deterministic: true, text: chunkMiddleB },
+    { label: 'chunk-4-end', deterministic: true, text: chunkEnd }
+  ].filter((c) => c.text);
+
+  const sampleWords = sampleChunks.flatMap((c) => c.text.split(/\s+/).filter(Boolean)).slice(0, 200);
+  const sampleText = sampleWords.join(' ').trim();
+  const sampleWordCount = sampleWords.length;
+  const sampleSummary = sampleWordCount ? `Sample summary: ${sampleWords.slice(0, 45).join(' ')}...` : '';
 
   const system = computeSystemProfile();
   if (sampleWordCount < 30) {
@@ -979,15 +993,17 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
       source: 'no-readable-data',
       plans: [],
       sampleWordCount,
-      warning: 'I cannot read enough text from the uploaded files to generate reliable feature plans. Try OCR for scanned PDFs or upload text-readable files.'
+      warning: 'I cannot read enough text from the uploaded files to generate reliable feature plans. Try OCR for scanned PDFs or upload text-readable files.',
+      requestPreview: { sampledContext: { totalWords, chunks: sampleChunks } }
     });
   }
 
   const sampleTokens = sampleText.toLowerCase().match(/[a-z][a-z0-9-]{2,}/g) || [];
   const stop = new Set(['the','and','for','with','that','this','from','are','was','were','have','has','had','into','over','under','their','about','between','after','before','your','what','when','where','which']);
+  const noise = new Set(['obj','endobj','xref','stream','endstream','flatedecode','pdf','type0','catalog']);
   const freq = new Map();
   for (const t of sampleTokens) {
-    if (stop.has(t)) continue;
+    if (stop.has(t) || noise.has(t) || /^pdf-\d/i.test(t)) continue;
     freq.set(t, (freq.get(t) || 0) + 1);
   }
   const topTerms = [...freq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,8).map(([t])=>t);
@@ -1034,7 +1050,18 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
   };
   const heuristicPlans = [quick, balanced, hardcore];
 
-  if (!openRouterKey) return res.json({ ok: true, source: 'heuristic', plans: heuristicPlans, sampleWordCount, sampleSummary });
+  const basePreview = {
+    providerEndpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    model,
+    sampledContext: {
+      totalWords,
+      sampleWordCount,
+      sampleSummary,
+      chunks: sampleChunks
+    }
+  };
+
+  if (!openRouterKey) return res.json({ ok: true, source: 'heuristic', plans: heuristicPlans, sampleWordCount, sampleSummary, requestPreview: { ...basePreview, note: 'No API key configured; heuristic mode used.' } });
 
   try {
     const prompt = `You are designing indexing feature plans for a SurrealDB investigative app.
@@ -1043,6 +1070,7 @@ User goal: ${goal}
 Files:\n${fileList || 'none'}
 Data sample (max 200 words):\n${sampleText || 'no sample extracted'}
 Sample summary:\n${sampleSummary || 'none'}
+Deterministic context chunks (~100 words each from beginning/middle/end):\n${sampleChunks.map((c)=>`- ${c.label}: ${c.text}`).join('\n') || 'none'}
 Return strict JSON array of 3 objects with keys:
 - tier (Fast|Balanced|Hardcore)
 - name
@@ -1061,10 +1089,11 @@ Critical constraints:
 - If uncertain, state uncertainty and stay generic to detected domain terms.
 Make options meaningfully different and practical.`;
 
+    const aiPayload = { model, messages: [{ role: 'user', content: prompt }], temperature: 0.2 };
     const aiResp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${openRouterKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.2 })
+      body: JSON.stringify(aiPayload)
     });
     const aiJson = await aiResp.json();
     const raw = String(aiJson?.choices?.[0]?.message?.content || '').trim();
@@ -1084,57 +1113,11 @@ Make options meaningfully different and practical.`;
         tableWriteIntents: Array.isArray(p.tableWriteIntents) ? p.tableWriteIntents.map((x) => String(x)).slice(0, 12) : [],
         exampleQuestion: String(p.exampleQuestion || '')
       }));
-      return res.json({ ok: true, source: 'ai', plans: cleaned, sampleWordCount, sampleSummary });
+      return res.json({ ok: true, source: 'ai', plans: cleaned, sampleWordCount, sampleSummary, requestPreview: { ...basePreview, prompt, payload: aiPayload } });
     }
-    return res.json({ ok: true, source: 'heuristic-fallback', plans: heuristicPlans, sampleWordCount, sampleSummary });
-  } catch {
-    return res.json({ ok: true, source: 'heuristic-error-fallback', plans: heuristicPlans, sampleWordCount, sampleSummary });
-  }
-});
-
-app.post('/api/index/strategy-suggest/:cacheId', async (req, res) => {
-  const cacheId = String(req.params.cacheId || '').trim();
-  const mode = String(req.body?.mode || 'heuristic').trim();
-  const data = readCaches();
-  const cache = findCache(data, cacheId);
-  if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
-
-  const files = (cache.files || []).slice(0, 8);
-  const extCounts = {};
-  for (const f of files) {
-    const ext = String((f.originalName || '').split('.').pop() || '').toLowerCase();
-    extCounts[ext] = (extCounts[ext] || 0) + 1;
-  }
-  const heuristic = {
-    strategy: 'entity-relationship-timeline',
-    rationale: `Detected ${files.length} sample files. Prioritize people/org extraction, money terms, and timeline events.`,
-    focus: ['people', 'organizations', 'money transfers', 'dates/timeline', 'communications metadata'],
-    extCounts
-  };
-
-  if (mode !== 'ai') return res.json({ ok: true, source: 'heuristic', ...heuristic });
-
-  const key = String(req.body?.openRouterKey || '').trim();
-  const model = String(req.body?.model || '').trim() || 'openai/gpt-4o-mini';
-  if (!key) return res.json({ ok: true, source: 'heuristic-no-key', ...heuristic });
-
-  try {
-    const prompt = `Suggest an indexing strategy for investigation data.
-Files:\n${files.map((f) => `- ${f.originalName} (${f.size} bytes)`).join('\n')}
-Return JSON with keys: strategy, rationale, focus(array).`;
-    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.2 })
-    });
-    const j = await r.json();
-    const raw = String(j?.choices?.[0]?.message?.content || '').trim();
-    let parsed = null;
-    try { parsed = JSON.parse(raw.replace(/^```json/i, '').replace(/```$/i, '').trim()); } catch {}
-    if (parsed?.strategy) return res.json({ ok: true, source: 'ai', ...parsed, extCounts });
-    return res.json({ ok: true, source: 'heuristic-fallback', ...heuristic, aiRaw: raw.slice(0, 600) });
-  } catch {
-    return res.json({ ok: true, source: 'heuristic-error-fallback', ...heuristic });
+    return res.json({ ok: true, source: 'heuristic-fallback', plans: heuristicPlans, sampleWordCount, sampleSummary, requestPreview: { ...basePreview, prompt, payload: aiPayload, aiRawPreview: raw.slice(0, 500) } });
+  } catch (error) {
+    return res.json({ ok: true, source: 'heuristic-error-fallback', plans: heuristicPlans, sampleWordCount, sampleSummary, requestPreview: { ...basePreview, error: error.message || 'unknown' } });
   }
 });
 

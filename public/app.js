@@ -54,7 +54,7 @@ function buildSurrealFormatProfile(profile = null){
   };
 }
 function setProfileLock(locked){
-  ['index-strategy','index-strategy-notes','chunk-size','parallel-workers','analysis-enabled','prefer-gpu','suggest-strategy'].forEach((id)=>{ if($(id)) $(id).disabled = locked; });
+  ['index-strategy','index-strategy-notes','chunk-size','parallel-workers','analysis-enabled','prefer-gpu'].forEach((id)=>{ if($(id)) $(id).disabled = locked; });
 }
 function applyProfile(profile){
   if (!profile) return;
@@ -182,6 +182,7 @@ $('generate-feature-plans').onclick = async ()=>{
   });
   const j = await r.json();
   if (!r.ok || !j.ok) { $('feature-plan-status').textContent = `Feature planning failed: ${j.error||'unknown'}`; return; }
+  if ($('feature-ai-preview')) $('feature-ai-preview').textContent = JSON.stringify(j.requestPreview || { note: 'No preview available' }, null, 2);
   renderFeaturePlans(j.plans || []);
   if (j.sampleSummary) $('quick-file-summary').textContent = j.sampleSummary;
   if (!j.plans?.length) {
@@ -360,8 +361,6 @@ $('upload-btn').onclick=async()=>{ try { await uploadSelectedFilesIfAny(); } cat
 $('load-sample').onclick=async()=>{ const cacheId=selectedCacheId(); if(!cacheId) return; $('upload-status').textContent = 'Uploading sample fixture...'; const r=await fetch('/fixtures/sample-case-500w.txt'); const txt=await r.text(); const f=new File([txt],'sample-case-500w.txt',{type:'text/plain'}); const fd=new FormData(); fd.append('cacheId',cacheId); fd.append('files',f); const up=await fetch('/api/upload',{method:'POST',body:fd}); const j=await up.json(); if(!up.ok){ $('upload-status').textContent = `Sample upload failed: ${j.error||'unknown'}`; return; } $('upload-status').textContent = 'Sample uploaded.'; renderUploadedFilePreview(j.files || []); await fetchCaches(); await runQuickSummary(cacheId); };
 
 async function checkSurreal(){ const r=await fetch('/api/surreal/health'); const j=await r.json(); if(r.ok&&j.ok){ $('surreal-dot').className='dot green'; $('surreal-status').textContent='Reachable'; return true; } $('surreal-dot').className='dot red'; $('surreal-status').textContent=`Unreachable: ${j.error||'unknown'}`; return false; }
-
-$('suggest-strategy').onclick = async ()=>{ const cacheId = selectedCacheId(); if(!cacheId) return; $('index-log').textContent = 'Requesting strategy suggestion...'; const mode = $('or-key').value.trim() ? 'ai' : 'heuristic'; const r = await fetch(`/api/index/strategy-suggest/${cacheId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ mode, openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() }) }); const j = await r.json(); if (!r.ok || !j.ok) { $('index-log').textContent = `Strategy suggestion failed: ${j.error||'unknown'}`; return; } $('index-strategy-notes').value = `${j.strategy || ''} — ${j.rationale || ''}`.trim(); $('index-log').textContent = `Suggested strategy (${j.source}):\n- ${j.strategy}\n- ${j.rationale}\nFocus: ${(j.focus||[]).join(', ')}`; };
 
 $('load-existing-index').onclick = async ()=>{
   const cacheId=selectedCacheId(); if(!cacheId) return;

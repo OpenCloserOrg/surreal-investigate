@@ -59,7 +59,6 @@
           <option value="custom">Custom</option>
         </select>
         <input id="index-strategy-notes" placeholder="Custom indexing strategy notes (optional)" />
-        <button id="suggest-strategy">Suggest Strategy</button>
         <button id="view-surreal-format">See Surreal Format</button>
         <button id="load-existing-index">Load Existing Index</button>
         <button id="index-btn">Create / Refresh Index</button>
@@ -89,6 +88,10 @@
       </div>
       <p class="muted" id="feature-plan-status">No feature plans generated yet.</p>
       <div id="feature-plans"></div>
+      <details class="feature-plan">
+        <summary>AI Request Preview (for Generate Feature Plans)</summary>
+        <pre id="feature-ai-preview" class="log">No request preview yet.</pre>
+      </details>
       <div class="card" id="active-profile-card" style="margin-top:10px">
         <h3>Active Feature Plan</h3>
         <p class="muted" id="active-profile-status">No active feature plan selected.</p>
