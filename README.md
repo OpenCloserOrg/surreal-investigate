@@ -8,6 +8,8 @@ Local-first **SurrealDB + Node.js** data intelligence app for large file collect
 
 Use it to turn mixed documents/spreadsheets/logs into durable structured memory that AI can query for patterns, correlations, and probability-style insights.
 
+Current AI provider path: **OpenRouter** (single endpoint, multi-model routing for easy model comparisons). More providers (OpenAI/Anthropic/Together/local) are planned.
+
 When fully running, you can:
 1. Create a cache (dataset workspace)
 2. Upload files (or load sample fixture)

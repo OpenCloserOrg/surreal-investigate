@@ -16,6 +16,7 @@
       <h2>Workflow + File Handling</h2>
       <p class="guide"><i class="fa-regular fa-lightbulb"></i> <strong>Guidance:</strong> Follow this sequence: Upload → Generate Feature Plans → Index → Ask Questions. Files are copied to <code>uploads/&lt;cacheId&gt;/</code>, index artifacts are written under <code>indexes/&lt;cacheId&gt;/</code>, and the index manifest is <code>indexes/&lt;cacheId&gt;/manifest.json</code>.</p>
       <ol class="muted">
+        <li><strong>Credentials:</strong> add OpenRouter key + model id (optional for AI-assisted planning/summaries).</li>
         <li><strong>Upload:</strong> attach files to cache (selection alone does nothing).</li>
         <li><strong>Feature Plans:</strong> generate extraction mapping + lexicon + table intents.</li>
         <li><strong>Index:</strong> writes structured rows to SurrealDB tables.</li>
@@ -28,13 +29,15 @@
     </section>
 
     <section class="card">
-      <h2>OpenRouter</h2>
+      <h2>API Credentials (OpenRouter)</h2>
+      <p class="guide"><i class="fa-regular fa-lightbulb"></i> <strong>Guidance:</strong> This app currently uses OpenRouter so you can access many models from one API endpoint and quickly compare performance. Paste your OpenRouter API key, then use an OpenRouter model identifier (example: <code>qwen/qwen3-32b</code> or <code>google/gemini-2.0-flash-001</code>).</p>
       <div class="row">
-        <input id="or-key" placeholder="OpenRouter API key" type="password" />
-        <input id="or-model" placeholder="Model (e.g. google/gemini-2.0-flash-001)" />
+        <input id="or-key" placeholder="OpenRouter API key (sk-or-v1-...)" type="password" />
+        <input id="or-model" placeholder="OpenRouter model id (e.g. qwen/qwen3-32b)" />
         <button id="save-or">Save</button>
         <button id="ping-or">Ping</button>
       </div>
+      <p class="muted">Coming soon: additional providers (OpenAI, Anthropic, Together, local model adapters).</p>
       <p>Status: <span id="or-dot" class="dot red"></span> <span id="or-status">Not checked</span></p>
     </section>
 
