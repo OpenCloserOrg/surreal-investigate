@@ -142,6 +142,10 @@ function applyGateState(){
   $('prefer-gpu').disabled = !hasCacheSelected || Boolean(activeIndexProfile);
 
   $('index-btn').dataset.locked = (!hasCacheSelected || (!hasUploadedFiles && !selectedLocalFiles)) ? '1' : '0';
+  if ($('index-btn-large')) {
+    $('index-btn-large').dataset.locked = $('index-btn').dataset.locked;
+    $('index-btn-large').disabled = $('index-btn').dataset.locked === '1';
+  }
   $('load-existing-index').dataset.locked = (!hasCacheSelected || !hasUploadedFiles) ? '1' : '0';
   $('generate-feature-plans').dataset.locked = (!hasCacheSelected || !hasUploadedFiles) ? '1' : '0';
   $('recommend-index-settings').dataset.locked = (!hasCacheSelected || !hasUploadedFiles) ? '1' : '0';
@@ -194,7 +198,7 @@ function showConfirm(message){
 function renderLiveTrace(){
   const el = $('live-trace');
   if (!liveTrace.length) { el.innerHTML=''; return; }
-  el.innerHTML = liveTrace.map((t, idx)=>`<div class="trace-item"><div><strong>${t.step}</strong><div class="state">${t.state || 'pending'}</div></div><button class="view" data-idx="${idx}">View</button></div>`).join('');
+  el.innerHTML = liveTrace.map((t, idx)=>`<div class="trace-item ${(t.state||'pending')}" ><div><strong>${t.step}</strong><div class="state">${t.state || 'pending'}</div></div><button class="view" data-idx="${idx}">View</button></div>`).join('');
   el.querySelectorAll('button[data-idx]').forEach((btn)=>{
     btn.onclick = ()=>{
       const i = Number(btn.getAttribute('data-idx'));
@@ -642,6 +646,8 @@ $('load-existing-index').onclick = async ()=>{
   scrollToSection('section-ask');
 };
 
+if ($('index-btn-large')) $('index-btn-large').onclick = ()=> $('index-btn').click();
+
 $('index-btn').onclick=async()=>{
   if ($('index-btn').dataset.locked === '1') return notifyBlocked('index');
   const cacheId=selectedCacheId(); if(!cacheId) return;
@@ -720,7 +726,7 @@ $('ask-btn').onclick=async()=>{
 
   // optimistic user bubble
   const current = $('chat-thread').innerHTML;
-  $('chat-thread').innerHTML = current + `<div class="msg user"><div class="meta">user • now</div><div>${q.replace(/</g,'&lt;')}</div></div>`;
+  $('chat-thread').innerHTML = current + `<div class="msg user"><div class="meta">user • now</div><div>${q.replace(/</g,'&lt;')}</div></div><div id="assistant-typing" class="msg assistant typing"><div class="meta">assistant • now</div><div><span class="spinner"></span>Thinking...</div></div>`;
 
   liveTrace = [];
   setTraceStep('parse_query', 'running', {
@@ -746,6 +752,7 @@ $('ask-btn').onclick=async()=>{
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 70000);
   let r, j;
+  const clearTyping = ()=>{ const t = $('assistant-typing'); if (t) t.remove(); };
   try {
     setTraceStep('parse_query', 'done');
     setTraceStep('surreal_precheck', 'running');
@@ -754,6 +761,7 @@ $('ask-btn').onclick=async()=>{
   } catch (e) {
     clearTimeout(t);
     $('query-status').textContent='Query failed';
+    clearTyping();
     setTraceStep('surreal_precheck', 'error', { error: e.name === 'AbortError' ? 'Request timed out waiting for response' : e.message });
     $('trace').textContent = `ERROR: ${e.name === 'AbortError' ? 'Request timed out waiting for response' : e.message}`;
     return;
@@ -772,13 +780,14 @@ $('ask-btn').onclick=async()=>{
     }
   }
 
-  if(!r.ok){ $('query-status').textContent='Query failed'; $('trace').textContent = (j.trace||[]).map((x)=>JSON.stringify(x,null,2)).join('\n\n') + `\nERROR: ${j.error||'query failed'}`; return; }
+  if(!r.ok){ $('query-status').textContent='Query failed'; clearTyping(); $('trace').textContent = (j.trace||[]).map((x)=>JSON.stringify(x,null,2)).join('\n\n') + `\nERROR: ${j.error||'query failed'}`; return; }
 
   if (j.chatId) activeChatId = j.chatId;
   const struct = j.structured || {};
   const traceLines = (j.trace || []).map((x, idx) => `[${idx+1}] ${x.step}\n${JSON.stringify(x, null, 2)}`);
   $('trace').textContent = `${traceLines.join('\n\n')}\n\nSurreal returned:\n- chunks: ${(j.evidence||[]).length}\n- entities: ${struct.entities?.length||0}\n- events: ${struct.events?.length||0}\n- activities: ${struct.activities?.length||0}\n- intents: ${struct.intents?.length||0}\n- anomalies: ${struct.anomalies?.length||0}\n- relations: ${struct.relations?.length||0}\n${mode==='ai'?'AI synthesized final answer using these findings.':'Surreal-only response returned.'}`;
   $('query-status').textContent=`Done. mode=${j.mode}`;
+  clearTyping();
   await fetchChats();
   await loadChatMessages();
 

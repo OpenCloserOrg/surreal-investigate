@@ -1010,7 +1010,8 @@ Return:
 1) direct answer
 2) key connections/patterns
 3) notable anomalies or mismatches
-4) confidence (low/medium/high) with why.`;
+4) confidence (low/medium/high) with why.
+Formatting rule: plain text only, no markdown headers, no asterisks.`;
     pushTrace('build_ai_prompt', {
       explanation: 'Compose grounded AI prompt from Surreal retrieval output + recent chat context.',
       request: {
@@ -1054,7 +1055,8 @@ Return:
         responsePreview: String(j?.choices?.[0]?.message?.content || '').slice(0, 400)
       }
     });
-    const answer = j?.choices?.[0]?.message?.content || 'No AI answer returned.';
+    const answerRaw = j?.choices?.[0]?.message?.content || 'No AI answer returned.';
+    const answer = String(answerRaw).replace(/\*+/g, '').replace(/^#{1,6}\s*/gm, '').trim();
 
     appendChatLog(cacheId, chatId, { role: 'user', mode, queryStrategy, content: question });
     appendChatLog(cacheId, chatId, { role: 'assistant', mode, queryStrategy, content: answer, evidenceCount: chunks.length });
