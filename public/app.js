@@ -102,6 +102,10 @@ function applyGateState(){
   $('upload-btn').disabled = !hasCacheSelected;
   $('load-sample').disabled = !hasCacheSelected;
   $('file-input').disabled = !hasCacheSelected;
+  const disabledMsg = 'Select which cache you would like first.';
+  $('file-input').title = !hasCacheSelected ? disabledMsg : '';
+  $('upload-btn').title = !hasCacheSelected ? disabledMsg : '';
+  $('load-sample').title = !hasCacheSelected ? disabledMsg : '';
 
   $('chunk-size').disabled = !hasCacheSelected || Boolean(activeIndexProfile);
   $('parallel-workers').disabled = !hasCacheSelected || Boolean(activeIndexProfile);
