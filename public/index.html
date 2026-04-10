@@ -58,6 +58,7 @@
         </select>
         <input id="index-strategy-notes" placeholder="Custom indexing strategy notes (optional)" />
         <button id="suggest-strategy">Suggest Strategy</button>
+        <button id="view-surreal-format">See Surreal Format</button>
         <button id="load-existing-index">Load Existing Index</button>
         <button id="index-btn">Create / Refresh Index</button>
       </div>
@@ -83,6 +84,20 @@
       </div>
       <p class="muted" id="feature-plan-status">No feature plans generated yet.</p>
       <div id="feature-plans"></div>
+      <div class="card" id="active-profile-card" style="margin-top:10px">
+        <h3>Active Index Profile</h3>
+        <p class="muted" id="active-profile-status">No active profile selected.</p>
+        <div class="row">
+          <button id="exit-active-profile">Exit Profile</button>
+          <button id="view-active-profile-format">View Format</button>
+          <button id="edit-active-profile">Edit JSON</button>
+        </div>
+        <textarea id="profile-json-editor" class="log hidden" style="width:100%;min-height:170px"></textarea>
+        <div class="row hidden" id="profile-editor-actions">
+          <button id="save-profile-json">Validate + Save as Cache Profile</button>
+          <button id="cancel-profile-json">Cancel Edit</button>
+        </div>
+      </div>
       <div class="progress-wrap"><div id="index-progress" class="progress"></div></div>
       <p>SurrealDB: <span id="surreal-dot" class="dot red"></span> <span id="surreal-status">Not checked</span></p>
       <p class="muted" id="index-estimate">No active indexing job.</p>

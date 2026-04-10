@@ -105,6 +105,24 @@ function normalizeIndexOptions(input = {}) {
   };
 }
 
+function normalizeIndexProfile(input = {}) {
+  const strategy = String(input.strategy || 'investigation-default').trim() || 'investigation-default';
+  const name = String(input.name || strategy).trim().slice(0, 120);
+  const notes = String(input.notes || '').trim().slice(0, 1200);
+  const tableDesign = Array.isArray(input.tableDesign) ? input.tableDesign.map((x) => String(x).trim()).filter(Boolean).slice(0, 20) : [];
+  const examples = Array.isArray(input.examples) ? input.examples.slice(0, 2) : [];
+  return {
+    id: String(input.id || `profile-${Date.now()}`).trim(),
+    name,
+    strategy,
+    notes,
+    tableDesign,
+    indexOptions: normalizeIndexOptions(input.indexOptions || {}),
+    examples,
+    createdAt: input.createdAt || new Date().toISOString()
+  };
+}
+
 function computeSystemProfile() {
   const cpuCount = Array.isArray(os.cpus()) ? os.cpus().length : 1;
   const totalMemBytes = os.totalmem();
@@ -201,6 +219,41 @@ app.get('/api/index-recommendation/:cacheId', (req, res) => {
 });
 
 app.get('/api/caches', (_req, res) => res.json({ ok: true, caches: readCaches().caches || [] }));
+app.get('/api/index-profile/:cacheId', (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const data = readCaches();
+  const cache = findCache(data, cacheId);
+  if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
+  return res.json({ ok: true, activeProfile: cache.activeIndexProfile || null, customProfiles: cache.customIndexProfiles || [] });
+});
+app.post('/api/index-profile/:cacheId', (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const data = readCaches();
+  const cache = findCache(data, cacheId);
+  if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
+
+  const profile = normalizeIndexProfile(req.body?.profile || {});
+  const persist = req.body?.persist !== false;
+  cache.activeIndexProfile = profile;
+  if (persist) {
+    cache.customIndexProfiles = Array.isArray(cache.customIndexProfiles) ? cache.customIndexProfiles : [];
+    cache.customIndexProfiles.unshift(profile);
+    cache.customIndexProfiles = cache.customIndexProfiles.slice(0, 20);
+  }
+  cache.updatedAt = new Date().toISOString();
+  writeCaches(data);
+  return res.json({ ok: true, activeProfile: cache.activeIndexProfile, customProfiles: cache.customIndexProfiles || [] });
+});
+app.delete('/api/index-profile/:cacheId', (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const data = readCaches();
+  const cache = findCache(data, cacheId);
+  if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
+  cache.activeIndexProfile = null;
+  cache.updatedAt = new Date().toISOString();
+  writeCaches(data);
+  return res.json({ ok: true });
+});
 app.get('/api/index-progress/:cacheId', (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
   const job = indexJobs.get(cacheId);
@@ -913,6 +966,7 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
   const quick = {
     tier: 'Fast',
     name: 'Quick scan',
+    strategy: 'entities-first',
     explanation: `Fastest pass for initial orientation on detected topic (${domainHint}).`,
     indexOptions: { chunkSize: 2400, parallelWorkers: Math.max(1, Math.min(8, system.recommended.parallelWorkers + 1)), analysisEnabled: false, preferGpu: false },
     estimatedTime: 'Low',
@@ -922,6 +976,7 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
   const balanced = {
     tier: 'Balanced',
     name: 'Investigation default',
+    strategy: 'investigation-default',
     explanation: `Good tradeoff between indexing time and relationship discovery for ${domainHint} context.`,
     indexOptions: { chunkSize: 1800, parallelWorkers: system.recommended.parallelWorkers, analysisEnabled: true, preferGpu: false },
     estimatedTime: 'Medium',
@@ -931,6 +986,7 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
   const hardcore = {
     tier: 'Hardcore',
     name: 'Deep graph',
+    strategy: 'custom',
     explanation: `Most robust structure for high-detail clustering and relationship mapping on ${domainHint}.`,
     indexOptions: { chunkSize: 1400, parallelWorkers: Math.max(1, system.recommended.parallelWorkers - 1), analysisEnabled: true, preferGpu: false },
     estimatedTime: 'High',
@@ -975,6 +1031,7 @@ Make options meaningfully different and practical.`;
         tier: String(p.tier || ''),
         name: String(p.name || ''),
         explanation: String(p.explanation || ''),
+        strategy: String(p.strategy || 'custom'),
         indexOptions: normalizeIndexOptions(p.indexOptions || {}),
         estimatedTime: String(p.estimatedTime || 'Medium'),
         tableDesign: Array.isArray(p.tableDesign) ? p.tableDesign.map((x) => String(x)).slice(0, 12) : [],

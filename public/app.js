@@ -4,6 +4,8 @@ let activeChatId = '';
 let initializedNewChatForCache = new Set();
 let liveTrace = [];
 let recommendedIndexOptions = null;
+let featurePlansState = [];
+let activeIndexProfile = null;
 
 function ext(name=''){ const p=name.split('.'); return p.length>1 ? p.pop().toLowerCase() : ''; }
 function bytes(n=0){ if(n<1024) return `${n} B`; if(n<1048576) return `${(n/1024).toFixed(1)} KB`; if(n<1073741824) return `${(n/1048576).toFixed(1)} MB`; return `${(n/1073741824).toFixed(2)} GB`; }
@@ -11,6 +13,55 @@ function duration(sec=0){ const s=Math.max(0, Math.round(Number(sec)||0)); if(s<
 function currentIndexOptions(){ return { chunkSize: Number($('chunk-size').value || 1400), parallelWorkers: Number($('parallel-workers').value || 1), analysisEnabled: $('analysis-enabled').checked, preferGpu: $('prefer-gpu').checked }; }
 function renderTuningLabels(){ $('chunk-size-value').textContent = $('chunk-size').value; $('workers-value').textContent = $('parallel-workers').value; }
 function selectedCacheId(){ return $('cache-select').value; }
+function buildSurrealFormatProfile(profile = null){
+  const p = profile || {
+    name: $('index-strategy').value,
+    strategy: $('index-strategy').value,
+    notes: $('index-strategy-notes').value.trim(),
+    indexOptions: currentIndexOptions(),
+    tableDesign: ['document','chunk','entity','event','activity','intent','relation','anomaly']
+  };
+  const opts = p.indexOptions || currentIndexOptions();
+  const writes = ['document','chunk'];
+  if (opts.analysisEnabled !== false) writes.push('entity','event','activity','intent','relation','anomaly');
+  return {
+    profileName: p.name || p.strategy || 'profile',
+    strategy: p.strategy || $('index-strategy').value,
+    notes: p.notes || $('index-strategy-notes').value.trim(),
+    indexOptions: opts,
+    requestPayload: {
+      indexStrategy: p.strategy || $('index-strategy').value,
+      indexStrategyNotes: p.notes || $('index-strategy-notes').value.trim(),
+      indexOptions: opts
+    },
+    surrealWriteTables: writes,
+    examples: p.examples?.length ? p.examples : [
+      { table: 'document', data: { cacheId: 'cache-123', filename: 'report.pdf', wordCount: 12800, extractionMethod: 'pdf-pdftotext' } },
+      { table: 'chunk', data: { cacheId: 'cache-123', filename: 'report.pdf', chunkIndex: 1, text: '...', charCount: 1400 } }
+    ]
+  };
+}
+function setProfileLock(locked){
+  ['index-strategy','index-strategy-notes','chunk-size','parallel-workers','analysis-enabled','prefer-gpu','suggest-strategy'].forEach((id)=>{ if($(id)) $(id).disabled = locked; });
+}
+function applyProfile(profile){
+  if (!profile) return;
+  activeIndexProfile = profile;
+  $('index-strategy').value = profile.strategy || 'custom';
+  $('index-strategy-notes').value = profile.notes || '';
+  $('chunk-size').value = String(profile.indexOptions?.chunkSize || 1400);
+  $('parallel-workers').value = String(profile.indexOptions?.parallelWorkers || 1);
+  $('analysis-enabled').checked = profile.indexOptions?.analysisEnabled !== false;
+  $('prefer-gpu').checked = Boolean(profile.indexOptions?.preferGpu);
+  renderTuningLabels();
+  setProfileLock(true);
+  $('active-profile-status').textContent = `Using profile: ${profile.name || profile.strategy} (${profile.strategy || 'custom'}). Exit profile to edit manual controls.`;
+}
+function clearActiveProfileUI(){
+  activeIndexProfile = null;
+  setProfileLock(false);
+  $('active-profile-status').textContent = 'No active profile selected.';
+}
 function setProgress(v=0){ $('index-progress').style.width = `${Math.max(0, Math.min(100, v))}%`; }
 function relTime(iso=''){ const d=new Date(iso); const s=Math.floor((Date.now()-d.getTime())/1000); if(!iso||Number.isNaN(d.getTime())) return ''; if(s<60) return `${s}s ago`; if(s<3600) return `${Math.floor(s/60)}m ago`; if(s<86400) return `${Math.floor(s/3600)}h ago`; return `${Math.floor(s/86400)}d ago`; }
 function scrollToSection(id){ const el=$(id); if(el) el.scrollIntoView({ behavior:'smooth', block:'start' }); }
@@ -71,6 +122,34 @@ $('use-recommended').onclick = ()=>{
   $('prefer-gpu').checked = Boolean(recommendedIndexOptions.preferGpu);
   renderTuningLabels();
 };
+$('view-surreal-format').onclick = ()=> showTraceModal('Surreal Format Preview', buildSurrealFormatProfile(activeIndexProfile));
+$('view-active-profile-format').onclick = ()=> showTraceModal('Active Profile — Surreal Format', buildSurrealFormatProfile(activeIndexProfile));
+$('exit-active-profile').onclick = async ()=>{
+  const cacheId = selectedCacheId();
+  clearActiveProfileUI();
+  if (cacheId) await fetch(`/api/index-profile/${cacheId}`, { method:'DELETE' });
+};
+$('edit-active-profile').onclick = ()=>{
+  const profile = activeIndexProfile || { name:'Custom profile', strategy:$('index-strategy').value, notes:$('index-strategy-notes').value.trim(), tableDesign:['document','chunk'], indexOptions:currentIndexOptions(), examples:[] };
+  $('profile-json-editor').classList.remove('hidden');
+  $('profile-editor-actions').classList.remove('hidden');
+  $('profile-json-editor').value = JSON.stringify(profile, null, 2);
+};
+$('cancel-profile-json').onclick = ()=>{
+  $('profile-json-editor').classList.add('hidden');
+  $('profile-editor-actions').classList.add('hidden');
+};
+$('save-profile-json').onclick = async ()=>{
+  const cacheId = selectedCacheId(); if(!cacheId) return;
+  let parsed;
+  try { parsed = JSON.parse($('profile-json-editor').value || '{}'); } catch (e) { $('active-profile-status').textContent = `Invalid JSON: ${e.message}`; return; }
+  const r = await fetch(`/api/index-profile/${cacheId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ profile: parsed, persist:true }) });
+  const j = await r.json();
+  if (!r.ok || !j.ok) { $('active-profile-status').textContent = `Save failed: ${j.error||'unknown'}`; return; }
+  applyProfile(j.activeProfile);
+  $('profile-json-editor').classList.add('hidden');
+  $('profile-editor-actions').classList.add('hidden');
+};
 
 $('generate-feature-plans').onclick = async ()=>{
   const cacheId = selectedCacheId(); if(!cacheId) return;
@@ -107,8 +186,18 @@ function renderSuggestions(list = []) {
 
 function renderFeaturePlans(plans = []) {
   const el = $('feature-plans');
-  if (!Array.isArray(plans) || !plans.length) { el.innerHTML = ''; return; }
-  el.innerHTML = plans.map((p, idx)=>`<details class="feature-plan" ${idx===0?'open':''}><summary>${(p.tier||'Plan').replace(/</g,'&lt;')} — ${(p.name||'').replace(/</g,'&lt;')}</summary><p class="muted">${String(p.explanation||'').replace(/</g,'&lt;')}</p><p><strong>Index options:</strong> chunk ${p.indexOptions?.chunkSize||1400}, workers ${p.indexOptions?.parallelWorkers||1}, analysis ${p.indexOptions?.analysisEnabled===false?'off':'on'}</p><p><strong>Estimated indexing:</strong> ${p.estimatedTime || 'n/a'}</p><p><strong>Example question:</strong> ${String(p.exampleQuestion||'').replace(/</g,'&lt;')}</p><ul>${(p.tableDesign||[]).map((t)=>`<li>${String(t).replace(/</g,'&lt;')}</li>`).join('')}</ul></details>`).join('');
+  featurePlansState = Array.isArray(plans) ? plans : [];
+  if (!featurePlansState.length) { el.innerHTML = ''; return; }
+  el.innerHTML = featurePlansState.map((p, idx)=>`<details class="feature-plan" ${idx===0?'open':''}><summary>${(p.tier||'Plan').replace(/</g,'&lt;')} — ${(p.name||'').replace(/</g,'&lt;')}</summary><p class="muted">${String(p.explanation||'').replace(/</g,'&lt;')}</p><p><strong>Index options:</strong> chunk ${p.indexOptions?.chunkSize||1400}, workers ${p.indexOptions?.parallelWorkers||1}, analysis ${p.indexOptions?.analysisEnabled===false?'off':'on'}</p><p><strong>Estimated indexing:</strong> ${p.estimatedTime || 'n/a'}</p><p><strong>Example question:</strong> ${String(p.exampleQuestion||'').replace(/</g,'&lt;')}</p><ul>${(p.tableDesign||[]).map((t)=>`<li>${String(t).replace(/</g,'&lt;')}</li>`).join('')}</ul><div class="row"><button class="use-plan" data-plan-idx="${idx}">Use This Profile</button><button class="view-plan" data-plan-idx="${idx}">See Surreal Format</button></div></details>`).join('');
+  el.querySelectorAll('.view-plan').forEach((btn)=>btn.onclick=()=>{ const p=featurePlansState[Number(btn.getAttribute('data-plan-idx'))]; showTraceModal('Surreal Format Preview', buildSurrealFormatProfile(p)); });
+  el.querySelectorAll('.use-plan').forEach((btn)=>btn.onclick=async()=>{
+    const p=featurePlansState[Number(btn.getAttribute('data-plan-idx'))];
+    if(!p) return;
+    const profile = { id:`plan-${Date.now()}`, name:p.name||p.tier||'Plan', strategy:p.strategy||'custom', notes:p.explanation||'', tableDesign:p.tableDesign||[], indexOptions:p.indexOptions||currentIndexOptions(), examples:[{table:'entity',data:{type:'example',value:'...'}},{table:'relation',data:{type:'cooccurrence',sourceValue:'A',targetValue:'B'}}] };
+    applyProfile(profile);
+    const cacheId = selectedCacheId();
+    if (cacheId) await fetch(`/api/index-profile/${cacheId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ profile, persist:false }) });
+  });
 }
 
 function renderUploadedFilePreview(files = []) {
@@ -137,6 +226,16 @@ async function runQuickSummary(cacheId){
     const existing = [...$('file-preview').querySelectorAll('tr')];
     if (!existing.length) renderUploadedFilePreview(activeRows);
   }
+}
+
+async function loadActiveProfile(cacheId){
+  if (!cacheId) return clearActiveProfileUI();
+  try {
+    const r = await fetch(`/api/index-profile/${cacheId}`);
+    const j = await r.json();
+    if (r.ok && j.ok && j.activeProfile) applyProfile(j.activeProfile);
+    else clearActiveProfileUI();
+  } catch { clearActiveProfileUI(); }
 }
 
 async function loadChatMessages(){
@@ -195,9 +294,10 @@ async function fetchCaches(){
   });
 
   await fetchChats();
+  if (active?.id) await loadActiveProfile(active.id); else clearActiveProfileUI();
 }
 
-$('cache-select').onchange = async ()=> { const list=await (await fetch('/api/caches')).json(); const c=(list.caches||[]).find(x=>x.id===selectedCacheId()); $('active-cache-label').textContent = c ? `${c.label} (${c.id})` : 'None'; renderUploadedFilePreview(c?.files || []); await fetchChats(); await checkSurreal(); if ((c?.files||[]).length) await runQuickSummary(c.id); };
+$('cache-select').onchange = async ()=> { const list=await (await fetch('/api/caches')).json(); const c=(list.caches||[]).find(x=>x.id===selectedCacheId()); $('active-cache-label').textContent = c ? `${c.label} (${c.id})` : 'None'; renderUploadedFilePreview(c?.files || []); await fetchChats(); await checkSurreal(); if (c?.id) await loadActiveProfile(c.id); if ((c?.files||[]).length) await runQuickSummary(c.id); };
 $('chat-select').onchange = async ()=> { activeChatId = $('chat-select').value; await loadChatMessages(); };
 $('new-chat').onclick = async ()=>{ const cacheId = selectedCacheId(); if(!cacheId) return; const j = await createNewChatForCache(cacheId, `Session ${new Date().toLocaleString()}`); activeChatId = j.chatId; await fetchChats(); $('query-status').textContent = 'New chat created.'; };
 
@@ -264,7 +364,16 @@ $('index-btn').onclick=async()=>{
   await pollProgress();
   const ticker = setInterval(pollProgress, 1200);
 
-  const r=await fetch(`/api/index/${cacheId}`,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ indexStrategy: $('index-strategy').value, indexStrategyNotes: $('index-strategy-notes').value.trim(), indexOptions: currentIndexOptions() }) });
+  const profilePayload = activeIndexProfile ? {
+    indexStrategy: activeIndexProfile.strategy || $('index-strategy').value,
+    indexStrategyNotes: activeIndexProfile.notes || $('index-strategy-notes').value.trim(),
+    indexOptions: activeIndexProfile.indexOptions || currentIndexOptions()
+  } : {
+    indexStrategy: $('index-strategy').value,
+    indexStrategyNotes: $('index-strategy-notes').value.trim(),
+    indexOptions: currentIndexOptions()
+  };
+  const r=await fetch(`/api/index/${cacheId}`,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(profilePayload) });
   const j=await r.json();
   stopped = true;
   clearInterval(ticker);

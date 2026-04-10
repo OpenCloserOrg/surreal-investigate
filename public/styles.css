@@ -19,6 +19,7 @@ input[type="range"]{width:100%}
 .trace-item{display:flex;justify-content:space-between;gap:10px;align-items:center;background:#101922;border:1px solid #253447;border-radius:8px;padding:7px 10px;font-size:12px}
 .trace-item .state{color:#98a2b3}
 .trace-item .view{padding:4px 8px;border-radius:6px;border:1px solid #35506d;background:#12263a;color:#cfe5ff;cursor:pointer}
+.hidden{display:none !important}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
 .modal.hidden{display:none}
 .modal-card{width:min(920px,95vw);max-height:85vh;overflow:auto;background:#121820;border:1px solid #2a3140;border-radius:12px;padding:12px}
