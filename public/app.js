@@ -140,6 +140,7 @@ function applyGateState(){
   $('ask-btn').dataset.locked = (!hasCacheSelected || !isIndexed) ? '1' : '0';
   $('suggest-btn').dataset.locked = (!hasCacheSelected || !isIndexed) ? '1' : '0';
   $('download-manifest').disabled = !hasCacheSelected;
+  $('download-index-data').disabled = !hasCacheSelected;
   $('query-mode').disabled = !hasCacheSelected || !isIndexed;
   $('query-strategy').disabled = !hasCacheSelected || !isIndexed;
   $('query-strategy-notes').disabled = !hasCacheSelected || !isIndexed;
@@ -351,7 +352,7 @@ function renderFeaturePlans(plans = []) {
   const el = $('feature-plans');
   featurePlansState = Array.isArray(plans) ? plans : [];
   if (!featurePlansState.length) { el.innerHTML = ''; setSelectedPlanUI(-1); return; }
-  el.innerHTML = featurePlansState.map((p, idx)=>`<details class="feature-plan" ${idx===0?'open':''}><summary>${(p.tier||'Plan').replace(/</g,'&lt;')} — ${(p.name||'').replace(/</g,'&lt;')} ${selectedPlanIdx===idx?'✅':''}</summary><p class="muted">${String(p.explanation||'').replace(/</g,'&lt;')}</p><p><strong>Performance setup:</strong> chunk ${p.indexOptions?.chunkSize||1400}, workers ${p.indexOptions?.parallelWorkers||1}, analysis ${p.indexOptions?.analysisEnabled===false?'off':'on'}</p><p><strong>Estimated indexing:</strong> ${p.estimatedTime || 'n/a'}</p><p><strong>Example question:</strong> ${String(p.exampleQuestion||'').replace(/</g,'&lt;')}</p><p><strong>Extraction mapping:</strong> ${(p.extractionMapping||[]).slice(0,3).map((x)=>String(x).replace(/</g,'&lt;')).join(' • ') || 'n/a'}</p><p><strong>Domain lexicon:</strong> ${(p.domainLexiconRules||[]).slice(0,8).map((x)=>String(x).replace(/</g,'&lt;')).join(', ') || 'n/a'}</p><p><strong>Suppressions:</strong> ${(p.suppressions||[]).slice(0,6).map((x)=>String(x).replace(/</g,'&lt;')).join(', ') || 'none'}</p><p><strong>Priority relationships:</strong> ${(p.priorityRelationships||[]).slice(0,4).map((x)=>String(x).replace(/</g,'&lt;')).join(' • ') || 'n/a'}</p><ul>${(p.tableWriteIntents||p.tableDesign||[]).map((t)=>`<li>${String(t).replace(/</g,'&lt;')}</li>`).join('')}</ul><div class="row"><button class="use-plan" data-plan-idx="${idx}">${selectedPlanIdx===idx?'Selected ✅':'Use This Feature Plan'}</button><button class="view-plan" data-plan-idx="${idx}">See Surreal Format</button></div></details>`).join('');
+  el.innerHTML = featurePlansState.map((p, idx)=>`<details class="feature-plan" ${idx===0?'open':''}><summary>${(p.tier||'Plan').replace(/</g,'&lt;')} — ${(p.name||'').replace(/</g,'&lt;')} ${selectedPlanIdx===idx?'✅':''}</summary><p class="muted">${String(p.explanation||'').replace(/</g,'&lt;')}</p><p><strong>Estimated indexing scope:</strong> ${p.estimatedTime || 'n/a'}</p><p><strong>Example question:</strong> ${String(p.exampleQuestion||'').replace(/</g,'&lt;')}</p><p><strong>Extraction mapping:</strong> ${(p.extractionMapping||[]).slice(0,3).map((x)=>String(x).replace(/</g,'&lt;')).join(' • ') || 'n/a'}</p><p><strong>Domain lexicon:</strong> ${(p.domainLexiconRules||[]).slice(0,8).map((x)=>String(x).replace(/</g,'&lt;')).join(', ') || 'n/a'}</p><p><strong>Suppressions:</strong> ${(p.suppressions||[]).slice(0,6).map((x)=>String(x).replace(/</g,'&lt;')).join(', ') || 'none'}</p><p><strong>Priority relationships:</strong> ${(p.priorityRelationships||[]).slice(0,4).map((x)=>String(x).replace(/</g,'&lt;')).join(' • ') || 'n/a'}</p><ul>${(p.tableWriteIntents||p.tableDesign||[]).map((t)=>`<li>${String(t).replace(/</g,'&lt;')}</li>`).join('')}</ul><div class="row"><button class="use-plan" data-plan-idx="${idx}">${selectedPlanIdx===idx?'Selected ✅':'Use This Feature Plan'}</button><button class="view-plan" data-plan-idx="${idx}">See Surreal Format</button></div></details>`).join('');
   setSelectedPlanUI(selectedPlanIdx);
   el.querySelectorAll('.view-plan').forEach((btn)=>btn.onclick=()=>{ const p=featurePlansState[Number(btn.getAttribute('data-plan-idx'))]; showTraceModal('Surreal Format Preview', buildSurrealFormatProfile(p)); });
   el.querySelectorAll('.use-plan').forEach((btn)=>btn.onclick=async()=>{
@@ -464,6 +465,20 @@ $('download-manifest').onclick = async ()=>{
   const a = document.createElement('a');
   a.href = url;
   a.download = `${cacheId}-manifest.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+$('download-index-data').onclick = async ()=>{
+  const cacheId = selectedCacheId();
+  if (!cacheId) return notifyBlocked('ask');
+  const r = await fetch(`/api/index-data-export/${cacheId}`);
+  const j = await r.json();
+  if (!r.ok || !j.ok) { $('query-status').textContent = `Index-data download failed: ${j.error||'unknown'}`; return; }
+  const blob = new Blob([JSON.stringify(j, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${cacheId}-index-data.json`;
   a.click();
   URL.revokeObjectURL(url);
 };

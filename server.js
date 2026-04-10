@@ -295,6 +295,25 @@ app.delete('/api/index-profile/:cacheId', (req, res) => {
   writeCaches(data);
   return res.json({ ok: true });
 });
+app.get('/api/index-data-export/:cacheId', async (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  try {
+    const payload = await withSurreal(async (db) => {
+      const read = async (table) => {
+        const q = await db.query(`SELECT * FROM ${table} WHERE cacheId = $cacheId LIMIT 5000;`, { cacheId });
+        return Array.isArray(q?.[0]) ? q[0] : (q?.[0]?.result || []);
+      };
+      const [document, chunk, entity, event, activity, intent, relation, anomaly] = await Promise.all([
+        read('document'), read('chunk'), read('entity'), read('event'), read('activity'), read('intent'), read('relation'), read('anomaly')
+      ]);
+      return { document, chunk, entity, event, activity, intent, relation, anomaly };
+    });
+    return res.json({ ok: true, cacheId, exportedAt: new Date().toISOString(), data: payload });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message || 'data export failed' });
+  }
+});
+
 app.get('/api/index-manifest/:cacheId', (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
   const manifestPath = path.join(INDEXES_DIR, cacheId, 'manifest.json');
@@ -1081,19 +1100,16 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
   }
 
   const totalWords = allWords.length;
-  const pickChunk = (start, size = 100) => allWords.slice(Math.max(0, start), Math.max(0, start) + size).join(' ').trim();
-  const chunkBegin = pickChunk(0, 100);
-  const chunkMiddleA = totalWords > 300 ? pickChunk(Math.floor(totalWords * 0.45), 100) : '';
-  const chunkMiddleB = totalWords > 450 ? pickChunk(Math.floor(totalWords * 0.65), 100) : '';
-  const chunkEnd = totalWords > 200 ? pickChunk(Math.max(0, totalWords - 100), 100) : '';
+  const pickChunk = (start, size = 120) => allWords.slice(Math.max(0, start), Math.max(0, start) + size).join(' ').trim();
   const sampleChunks = [
-    { label: 'chunk-1-beginning', deterministic: true, text: chunkBegin },
-    { label: 'chunk-2-middle', deterministic: true, text: chunkMiddleA },
-    { label: 'chunk-3-middle', deterministic: true, text: chunkMiddleB },
-    { label: 'chunk-4-end', deterministic: true, text: chunkEnd }
+    { label: 'chunk-1-beginning', deterministic: true, text: pickChunk(0) },
+    { label: 'chunk-2-q1', deterministic: true, text: totalWords > 220 ? pickChunk(Math.floor(totalWords * 0.25)) : '' },
+    { label: 'chunk-3-middle', deterministic: true, text: totalWords > 300 ? pickChunk(Math.floor(totalWords * 0.5)) : '' },
+    { label: 'chunk-4-q3', deterministic: true, text: totalWords > 380 ? pickChunk(Math.floor(totalWords * 0.75)) : '' },
+    { label: 'chunk-5-end', deterministic: true, text: totalWords > 200 ? pickChunk(Math.max(0, totalWords - 120)) : '' }
   ].filter((c) => c.text);
 
-  const sampleWords = sampleChunks.flatMap((c) => c.text.split(/\s+/).filter(Boolean)).slice(0, 200);
+  const sampleWords = sampleChunks.flatMap((c) => c.text.split(/\s+/).filter(Boolean)).slice(0, 400);
   const sampleText = sampleWords.join(' ').trim();
   const sampleWordCount = sampleWords.length;
   const sampleSummary = sampleWordCount ? `Sample summary: ${sampleWords.slice(0, 45).join(' ')}...` : '';
@@ -1126,12 +1142,12 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     : [];
 
   const quick = {
-    tier: 'Fast',
-    name: 'Quick scan',
+    tier: 'Main topic focus',
+    name: 'Topic-first mapping',
     strategy: 'entities-first',
-    explanation: `Fastest pass for initial orientation on detected topic (${domainHint}).`,
-    indexOptions: { chunkSize: 2400, parallelWorkers: Math.max(1, Math.min(8, system.recommended.parallelWorkers + 1)), analysisEnabled: false, preferGpu: false },
-    estimatedTime: 'Low',
+    explanation: `Focuses on core domain concepts first (${domainHint}) with practical relationship extraction.`,
+    indexOptions: { chunkSize: 1400, parallelWorkers: system.recommended.parallelWorkers, analysisEnabled: true, preferGpu: false },
+    estimatedTime: 'Medium',
     tableDesign: ['document', 'chunk', 'keyword frequencies'],
     extractionMapping: ['raw text -> chunk.text', 'high-frequency terms -> keyword summary'],
     domainLexiconRules: topTerms,
@@ -1141,8 +1157,8 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     exampleQuestion: `What are the main recurring themes in this ${domainHint} dataset related to: ${goal}?`
   };
   const balanced = {
-    tier: 'Balanced',
-    name: 'Investigation default',
+    tier: 'Comprehensive',
+    name: 'Cross-signal mapping',
     strategy: 'investigation-default',
     explanation: `Good tradeoff between indexing time and relationship discovery for ${domainHint} context.`,
     indexOptions: { chunkSize: 1800, parallelWorkers: system.recommended.parallelWorkers, analysisEnabled: true, preferGpu: false },
@@ -1156,8 +1172,8 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     exampleQuestion: `Which entities, events, and relationships are most correlated with: ${goal}?`
   };
   const hardcore = {
-    tier: 'Hardcore',
-    name: 'Deep graph',
+    tier: 'All-inclusive',
+    name: 'Maximum coverage graph',
     strategy: 'custom',
     explanation: `Most robust structure for high-detail clustering and relationship mapping on ${domainHint}.`,
     indexOptions: { chunkSize: 1400, parallelWorkers: Math.max(1, system.recommended.parallelWorkers - 1), analysisEnabled: true, preferGpu: false },
@@ -1188,7 +1204,7 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
 
   try {
     const prompt = `You are designing indexing feature plans for a SurrealDB investigative app.
-Create exactly 3 options: Fast, Balanced, Hardcore.
+Create exactly 3 options: Main topic focus, Comprehensive, All-inclusive.
 User goal: ${goal}
 Main intent: ${mainIntent}
 Detected recipe: ${detectedRecipe}
@@ -1198,7 +1214,7 @@ Data sample (max 200 words):\n${sampleText || 'no sample extracted'}
 Sample summary:\n${sampleSummary || 'none'}
 Deterministic context chunks (~100 words each from beginning/middle/end):\n${sampleChunks.map((c)=>`- ${c.label}: ${c.text}`).join('\n') || 'none'}
 Return strict JSON array of 3 objects with keys:
-- tier (Fast|Balanced|Hardcore)
+- tier (Main topic focus|Comprehensive|All-inclusive)
 - name
 - strategy (investigation-default|entities-first|timeline-first|custom)
 - explanation
