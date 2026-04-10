@@ -1179,12 +1179,16 @@ app.post('/api/cache-quick-summary/:cacheId', async (req, res) => {
   const hasSpreadsheet = names.some((n) => n.endsWith('.csv') || n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.tsv'));
   const hasGeo = /latitude|longitude|lat|lon|route|vessel|port|geo|epsg|geotiff|movement/i.test(readable.map((r)=>r.sample).join(' '));
   const hasNarrative = /chapter|verse|narrative|story|book|gospel|genesis|exodus|psalm|prophet/i.test(readable.map((r)=>r.sample).join(' '));
-  const hasComms = /from:|to:|subject:|email|thread|message|reply/i.test(readable.map((r)=>r.sample).join(' '));
+  const combined = readable.map((r)=>r.sample).join(' ');
+  const hasComms = /from:|to:|subject:|email|thread|message|reply/i.test(combined);
+  const hasTemporalSignals = /\b(\d{4}-\d{2}-\d{2}|yesterday|today|tomorrow|last week|next week|ago|later|previously|then|after|before|updated|changed|version|status)\b/i.test(combined);
+  const hasTranscriptStyle = /speaker|transcript|chat|conversation|call|meeting notes|log/i.test(combined);
   let detectedRecipe = 'research-report';
   if (hasSpreadsheet && hasGeo) detectedRecipe = 'mixed(structured+geo)';
   else if (hasSpreadsheet) detectedRecipe = 'structured-table';
   else if (hasGeo) detectedRecipe = 'geo-movement';
   else if (hasNarrative) detectedRecipe = 'narrative-longform';
+  else if (hasComms && (hasTemporalSignals || hasTranscriptStyle)) detectedRecipe = 'temporal-logs';
   else if (hasComms) detectedRecipe = 'communications';
 
   if (!readable.length) {
@@ -1203,6 +1207,7 @@ app.post('/api/cache-quick-summary/:cacheId', async (req, res) => {
 Also recommend the best Surreal indexing recipe and suppression policy.
 Return JSON only with keys: summary, detectedRecipe, suppressions (array), metadataPolicy (array).
 Rules: if this looks like research report/narrative, suppress footers/authors/institution boilerplate by default.
+If recipe is temporal-logs, prioritize time-aware state changes (before/after/current) and track evolving facts over time.
 Data snippets:\n${readable.map((s, i) => `#${i + 1} ${s.filename} (words:${s.extractedWords}, method:${s.extractionMethod})\n${s.sample}`).join('\n\n')}`;
     const r = await fetch(AI_PROVIDER_URL, {
       method: 'POST',
@@ -1289,6 +1294,9 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
   const recipeSuppressions = applyDetectedRecipe && /research|narrative/.test(detectedRecipe)
     ? ['footer lines', 'author affiliations', 'institution boilerplate']
     : [];
+  const recipePriorityRelationships = /temporal-logs/.test(detectedRecipe)
+    ? ['entity <-> state over time', 'state_old <-> state_new', 'event <-> timestamp window', 'statement <-> contradiction']
+    : ['entity <-> event', 'event <-> location/time'];
 
   const quick = {
     tier: 'Main topic focus',
@@ -1302,7 +1310,7 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     domainLexiconRules: topTerms,
     tableWriteIntents: ['document: metadata', 'chunk: retrieval text'],
     suppressions: recipeSuppressions,
-    priorityRelationships: ['topic <-> metric', 'metric <-> location', 'claim <-> evidence'],
+    priorityRelationships: [...recipePriorityRelationships, 'topic <-> metric', 'claim <-> evidence'].slice(0, 5),
     exampleQuestion: `What are the main recurring themes in this ${domainHint} dataset related to: ${goal}?`
   };
   const balanced = {
@@ -1317,7 +1325,7 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     domainLexiconRules: topTerms,
     tableWriteIntents: ['entity: named/domain concepts', 'event: measurable changes', 'relation: pair links', 'anomaly: unusual spikes'],
     suppressions: recipeSuppressions,
-    priorityRelationships: ['entity <-> event', 'event <-> location/time', 'method <-> outcome'],
+    priorityRelationships: [...recipePriorityRelationships, 'method <-> outcome', 'claim <-> evidence'].slice(0, 6),
     exampleQuestion: `Which entities, events, and relationships are most correlated with: ${goal}?`
   };
   const hardcore = {
@@ -1332,7 +1340,7 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     domainLexiconRules: topTerms,
     tableWriteIntents: ['activity: who-did-what', 'intent: objective clues', 'relation: graph edges', 'cluster labels: communities'],
     suppressions: recipeSuppressions,
-    priorityRelationships: ['actor <-> action', 'action <-> impact', 'cluster <-> anomaly'],
+    priorityRelationships: [...recipePriorityRelationships, 'actor <-> action', 'action <-> impact', 'cluster <-> anomaly'].slice(0, 6),
     exampleQuestion: `Show strongest clusters, outliers, and nearest-neighbor correlations relevant to: ${goal}.`
   };
   const heuristicPlans = [quick, balanced, hardcore];
@@ -1380,6 +1388,7 @@ Critical constraints:
 - Be intent-driven and file-driven from the sample.
 - Do NOT default to banking/accounts/transactions unless those terms appear in sample or goal.
 - Treat country names (e.g., United States) as location/geopolitical entities, not people.
+- If detected recipe is temporal-logs, include explicit state-change extraction (previous vs current) and time-window relationship edges.
 - If uncertain, state uncertainty and stay generic to detected domain terms.
 Make options meaningfully different and practical.`;
 
