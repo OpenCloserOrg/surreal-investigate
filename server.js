@@ -337,7 +337,15 @@ app.post('/api/convert-surrealql/:cacheId', async (req, res) => {
     return res.json({ ok: true, source: 'heuristic', surrealql: fallback, needsRemodel: false, schema: schemaResp });
   }
 
-  const prompt = `Convert the user statement into SurrealQL for cacheId ${cacheId} using this schema: ${JSON.stringify(schemaResp)}.\nStatement: ${statement}\nReturn JSON only: { surrealql, needsRemodel, remodelInstructions }. If current schema cannot answer precisely, set needsRemodel=true and provide concise remodelInstructions with custom indexing strategy notes.`;
+  const prompt = `Convert the user statement into SurrealQL for cacheId ${cacheId} using this schema: ${JSON.stringify(schemaResp)}.
+Statement: ${statement}
+Use these style patterns where relevant:
+1) Vector similarity + filter + graph traversal
+2) Relationship traversal / grouping
+3) Time-window comparisons
+4) Anomaly/contradiction detection
+Return JSON only: { surrealql, needsRemodel, remodelInstructions }.
+If current schema cannot answer precisely, set needsRemodel=true and provide concise remodelInstructions with custom indexing strategy notes.`;
   try {
     const payload = { model, messages: [{ role: 'user', content: prompt }], temperature: 0.1 };
     const ctrl = new AbortController();

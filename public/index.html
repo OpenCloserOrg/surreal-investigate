@@ -203,9 +203,13 @@
         <input id="question" placeholder="Search term (Surreal mode) or question (Surreal+AI)" />
         <button id="ask-btn">Run</button>
         <button id="suggest-btn">Suggest Questions</button>
+        <button id="query-cookbook">Open Query Cookbook</button>
         <button id="convert-surrealql">Convert to SurrealQL</button>
         <span id="convert-status" class="muted"></span>
         <button id="view-schema">View Schema</button>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:6px">
+        <button id="copy-surrealql" class="sugg-btn">Copy SurrealQL</button>
       </div>
       <pre id="surrealql-output" class="log" style="min-height:44px">No SurrealQL conversion yet.</pre>
       <div id="suggestions" class="suggestions"></div>
@@ -233,6 +237,17 @@
         <button id="confirm-cancel">Cancel</button>
         <button id="confirm-ok">Yes, remove</button>
       </div>
+    </div>
+  </div>
+
+  <div id="cookbook-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <strong>Query Cookbook</strong>
+        <button id="cookbook-close">Close</button>
+      </div>
+      <p class="muted">Pick an example pattern, insert it into the question box, then convert using your current schema.</p>
+      <div id="cookbook-list"></div>
     </div>
   </div>
   <script src="/app.js"></script>

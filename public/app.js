@@ -8,6 +8,52 @@ let featurePlansState = [];
 let activeIndexProfile = null;
 let selectedPlanIdx = -1;
 let currentCache = null;
+const queryCookbook = [
+  {
+    id:'vector-similarity',
+    title:'Vector similarity + filter',
+    nl:'Find 5 records semantically similar to this concept, but only where category is electronics and stock is positive.',
+    example:`SELECT name, price,
+  <-bought<-person->bought->product.* AS also_bought
+FROM product
+WHERE embedding <|5,40|> $user_query_vector
+  AND category = 'electronics'
+  AND stock_count > 0;`
+  },
+  {
+    id:'relationship-pattern',
+    title:'Relationship traversal pattern',
+    nl:'Show strongest entity relationships connected to CH4 emissions changes by country.',
+    example:`SELECT sourceValue, targetValue, type, count() AS links
+FROM relation
+WHERE cacheId = $cacheId
+  AND (sourceValue CONTAINS 'CH4' OR targetValue CONTAINS 'CH4')
+GROUP BY sourceValue, targetValue, type
+ORDER BY links DESC
+LIMIT 25;`
+  },
+  {
+    id:'time-window',
+    title:'Time-window trend query',
+    nl:'Compare trend shifts between 2019 and 2024 by location and metric.',
+    example:`SELECT filename, chunkIndex, dates, type, rawAmount
+FROM event
+WHERE cacheId = $cacheId
+  AND dates CONTAINS '2019' OR dates CONTAINS '2024'
+ORDER BY filename, chunkIndex
+LIMIT 200;`
+  },
+  {
+    id:'anomaly',
+    title:'Anomaly / contradiction detection',
+    nl:'Find potential contradictions or unusual patterns that might indicate loopholes.',
+    example:`SELECT type, severity, rationale, filename, chunkIndex
+FROM anomaly
+WHERE cacheId = $cacheId
+ORDER BY severity DESC
+LIMIT 100;`
+  }
+];
 
 function ext(name=''){ const p=name.split('.'); return p.length>1 ? p.pop().toLowerCase() : ''; }
 function bytes(n=0){ if(n<1024) return `${n} B`; if(n<1048576) return `${(n/1024).toFixed(1)} KB`; if(n<1073741824) return `${(n/1048576).toFixed(1)} MB`; return `${(n/1073741824).toFixed(2)} GB`; }
@@ -152,6 +198,7 @@ function applyGateState(){
 
   $('ask-btn').dataset.locked = (!hasCacheSelected || !isIndexed) ? '1' : '0';
   $('suggest-btn').dataset.locked = (!hasCacheSelected || !isIndexed) ? '1' : '0';
+  $('query-cookbook').disabled = !hasCacheSelected;
   $('convert-surrealql').disabled = !hasCacheSelected;
   $('view-schema').disabled = !hasCacheSelected;
   $('download-manifest').disabled = !hasCacheSelected;
@@ -185,6 +232,19 @@ function showTraceModal(title, detail){
   $('trace-modal').classList.remove('hidden');
 }
 function hideTraceModal(){ $('trace-modal').classList.add('hidden'); }
+function renderCookbook(){
+  $('cookbook-list').innerHTML = queryCookbook.map((q)=>`<div class="cookbook-card"><div class="row" style="justify-content:space-between;align-items:center"><strong>${q.title}</strong><button class="sugg-btn cookbook-use" data-id="${q.id}">Use this one</button></div><p class="muted">${q.nl}</p><pre class="log">${q.example.replace(/</g,'&lt;')}</pre></div>`).join('');
+  document.querySelectorAll('.cookbook-use').forEach((btn)=>{
+    btn.onclick=()=>{
+      const item = queryCookbook.find((x)=>x.id===btn.getAttribute('data-id'));
+      if(!item) return;
+      $('question').value = item.nl;
+      $('cookbook-modal').classList.add('hidden');
+      $('query-status').textContent = `Cookbook pattern selected: ${item.title}. Click Convert to SurrealQL.`;
+      $('question').focus();
+    };
+  });
+}
 function showConfirm(message){
   return new Promise((resolve)=>{
     $('confirm-text').textContent = message || 'Are you sure?';
@@ -456,6 +516,15 @@ $('save-or').onclick=()=>{
 $('trace-modal-close').onclick = hideTraceModal;
 $('trace-modal').onclick = (e)=>{ if(e.target.id==='trace-modal') hideTraceModal(); };
 $('confirm-modal').onclick = (e)=>{ if(e.target.id==='confirm-modal') $('confirm-modal').classList.add('hidden'); };
+$('query-cookbook').onclick = ()=>{ renderCookbook(); $('cookbook-modal').classList.remove('hidden'); };
+$('cookbook-close').onclick = ()=> $('cookbook-modal').classList.add('hidden');
+$('cookbook-modal').onclick = (e)=>{ if(e.target.id==='cookbook-modal') $('cookbook-modal').classList.add('hidden'); };
+$('copy-surrealql').onclick = async ()=>{
+  const txt = $('surrealql-output').textContent || '';
+  if (!txt || txt === 'No SurrealQL conversion yet.') { $('query-status').textContent = 'Nothing to copy yet.'; return; }
+  try { await navigator.clipboard.writeText(txt); $('query-status').textContent = 'SurrealQL copied.'; }
+  catch { $('query-status').textContent = 'Copy failed. Select text manually.'; }
+};
 $('ping-or').onclick=async()=>{ $('or-status').textContent='Pinging local credentials...'; const r=await fetch('/api/openrouter/ping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({useEnv:false,key:$('or-key').value.trim(),model:$('or-model').value.trim()})}); const j=await r.json(); if(r.ok&&j.ok){ $('or-dot').className='dot green'; $('or-status').textContent='Local credentials reachable'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`Ping failed: ${j.error||'unknown'}`; }};
 $('ping-or-env').onclick=async()=>{ $('or-status').textContent='Testing env credentials...'; const r=await fetch('/api/openrouter/ping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({useEnv:true})}); const j=await r.json(); if(r.ok&&j.ok){ $('or-dot').className='dot green'; $('or-status').textContent='Env credentials reachable'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`Env test failed: ${j.error||'unknown'}`; }};
 $('load-env-creds').onclick=async()=>{ $('or-status').textContent='Loading .env credentials...'; const r=await fetch('/api/credentials/env-load'); const j=await r.json(); if(j?.model) $('or-model').value=j.model; $('cred-env').checked=true; $('cred-local').checked=false; localStorage.setItem('creds.mode','env'); updateCredModeUI(); if(j.ok && j.active){ $('or-dot').className='dot green'; $('or-status').textContent='Loaded from .env and ping passed'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`.env load: ${j.message||'not active'}`; } };
