@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { withSurreal, ensureSchema, surrealConfig } from './lib/surreal.js';
 import { extractTextFromFile, chunkText, summarizeText, isSupported } from './lib/extract.js';
 import { analyzeChunk, buildCooccurrenceRelations, tokenize } from './lib/investigate.js';
@@ -17,6 +18,12 @@ const CHAT_LOGS_DIR = path.join(ROOT, 'chat-logs');
 const CACHES_JSON = path.join(APP_DIR, 'caches.json');
 const INDEX_JOB_TIMEOUT_MS = Number(process.env.INDEX_JOB_TIMEOUT_MS || 20 * 60 * 1000);
 const indexJobs = new Map();
+const DEFAULT_INDEX_OPTIONS = {
+  chunkSize: 1400,
+  parallelWorkers: 1,
+  analysisEnabled: true,
+  preferGpu: false
+};
 
 for (const p of [APP_DIR, UPLOADS_DIR, INDEXES_DIR, DATA_DIR, CHAT_LOGS_DIR]) fs.mkdirSync(p, { recursive: true });
 if (!fs.existsSync(CACHES_JSON)) fs.writeFileSync(CACHES_JSON, JSON.stringify({ caches: [] }, null, 2));
@@ -83,6 +90,59 @@ function writeManifest(cacheId, manifest) {
   fs.writeFileSync(path.join(dir, 'snapshots', `${ts}.json`), JSON.stringify(manifest, null, 2));
 }
 
+function clampInt(value, min, max, fallback) {
+  const n = Number.parseInt(value, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function normalizeIndexOptions(input = {}) {
+  return {
+    chunkSize: clampInt(input.chunkSize, 300, 8000, DEFAULT_INDEX_OPTIONS.chunkSize),
+    parallelWorkers: clampInt(input.parallelWorkers, 1, 24, DEFAULT_INDEX_OPTIONS.parallelWorkers),
+    analysisEnabled: input.analysisEnabled !== false,
+    preferGpu: Boolean(input.preferGpu)
+  };
+}
+
+function computeSystemProfile() {
+  const cpuCount = Array.isArray(os.cpus()) ? os.cpus().length : 1;
+  const totalMemBytes = os.totalmem();
+  const freeMemBytes = os.freemem();
+  const availableMemGb = Number((freeMemBytes / (1024 ** 3)).toFixed(1));
+  const safeWorkersByCpu = Math.max(1, Math.floor(cpuCount * 0.75));
+  const safeWorkersByRam = Math.max(1, Math.floor(availableMemGb / 1.25));
+  const recommendedWorkers = Math.max(1, Math.min(16, safeWorkersByCpu, safeWorkersByRam));
+  const recommendedChunkSize = availableMemGb >= 16 ? 2600 : availableMemGb >= 8 ? 2000 : 1400;
+  return {
+    cpuCount,
+    totalMemBytes,
+    freeMemBytes,
+    availableMemGb,
+    loadAvg: os.loadavg(),
+    recommended: {
+      parallelWorkers: recommendedWorkers,
+      chunkSize: recommendedChunkSize,
+      analysisEnabled: true,
+      preferGpu: false
+    }
+  };
+}
+
+async function mapLimit(items, limit, worker) {
+  const out = [];
+  let i = 0;
+  const slots = Array.from({ length: Math.max(1, limit) }, async () => {
+    while (i < items.length) {
+      const current = i;
+      i += 1;
+      out[current] = await worker(items[current], current);
+    }
+  });
+  await Promise.all(slots);
+  return out;
+}
+
 async function withTimeout(promise, ms = 15000, label = 'operation') {
   let timer;
   const timeout = new Promise((_, reject) => {
@@ -105,6 +165,40 @@ app.get('/api/surreal/health', async (_req, res) => {
   }
 });
 app.get('/api/config', (_req, res) => res.json({ ok: true, surreal: surrealConfig }));
+app.get('/api/system-profile', (_req, res) => res.json({ ok: true, system: computeSystemProfile() }));
+app.get('/api/index-recommendation/:cacheId', (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const data = readCaches();
+  const cache = findCache(data, cacheId);
+  if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
+
+  const totalBytes = (cache.files || []).reduce((sum, f) => sum + (Number(f.size) || 0), 0);
+  const system = computeSystemProfile();
+  const recommended = normalizeIndexOptions(system.recommended);
+  const baseline = cache.indexPerformance?.bytesPerSec || 38 * 1024;
+  const baselineWorkers = cache.indexPerformance?.indexOptions?.parallelWorkers || 1;
+  const workerBoost = Math.max(1, Math.min(4.5, recommended.parallelWorkers / baselineWorkers));
+  const chunkBoost = recommended.chunkSize > 1400 ? 1.18 : 1;
+  const predictedBytesPerSec = Math.floor(baseline * workerBoost * chunkBoost);
+  const currentEtaSec = Math.ceil(totalBytes / Math.max(1, baseline));
+  const predictedEtaSec = Math.ceil(totalBytes / Math.max(1, predictedBytesPerSec));
+  const savedSec = Math.max(0, currentEtaSec - predictedEtaSec);
+  const savedPct = currentEtaSec > 0 ? Math.round((savedSec / currentEtaSec) * 100) : 0;
+
+  return res.json({
+    ok: true,
+    cacheId,
+    totalBytes,
+    system,
+    recommended,
+    estimate: { baselineBytesPerSec: baseline, predictedBytesPerSec, currentEtaSec, predictedEtaSec, savedSec, savedPct },
+    rationale: [
+      `Use up to ${recommended.parallelWorkers} workers from CPU(${system.cpuCount}) + free RAM(${system.availableMemGb}GB).`,
+      `Chunk size ${recommended.chunkSize} lowers per-chunk overhead for larger datasets.`,
+      'GPU preference is exposed for future support; current pipeline is CPU + I/O bound.'
+    ]
+  });
+});
 
 app.get('/api/caches', (_req, res) => res.json({ ok: true, caches: readCaches().caches || [] }));
 app.get('/api/index-progress/:cacheId', (req, res) => {
@@ -136,7 +230,8 @@ app.get('/api/index-progress/:cacheId', (req, res) => {
     elapsedSec,
     bytesPerSec,
     etaSec,
-    pct
+    pct,
+    indexOptions: job.indexOptions || DEFAULT_INDEX_OPTIONS
   });
 });
 app.get('/api/chats/:cacheId', (req, res) => {
@@ -211,6 +306,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
   const forceReindex = Boolean(req.body?.forceReindex);
   const indexStrategy = String(req.body?.indexStrategy || '').trim() || 'balanced';
   const indexStrategyNotes = String(req.body?.indexStrategyNotes || '').trim();
+  const indexOptions = normalizeIndexOptions(req.body?.indexOptions || {});
   const data = readCaches();
   const cache = findCache(data, cacheId);
   if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
@@ -226,6 +322,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
           indexedAt: cache.updatedAt || new Date().toISOString(),
           status: 'ready',
           strategy: { name: indexStrategy, notes: indexStrategyNotes },
+          options: cache.indexPerformance?.indexOptions || DEFAULT_INDEX_OPTIONS,
           stats: cache.indexStats,
           logs: [{ at: new Date().toISOString(), message: 'Loaded existing index without re-scanning files.' }]
         };
@@ -242,12 +339,14 @@ app.post('/api/index/:cacheId', async (req, res) => {
       totalBytes: preFiles.reduce((s, f) => s + (Number(f.size) || 0), 0),
       processedBytes: 0,
       currentFile: '',
-      stage: 'initializing'
+      stage: 'initializing',
+      indexOptions
     });
 
     logServer('index:start', { cacheId, indexStrategy, indexStrategyNotes: indexStrategyNotes.slice(0, 180) });
     const startJob = indexJobs.get(cacheId); if (startJob) { startJob.stage = 'connecting_to_surreal'; indexJobs.set(cacheId, startJob); }
     log(`Index strategy: ${indexStrategy}${indexStrategyNotes ? ` (${indexStrategyNotes.slice(0, 120)})` : ''}`);
+    log(`Tuning: chunkSize=${indexOptions.chunkSize}, workers=${indexOptions.parallelWorkers}, analysis=${indexOptions.analysisEnabled ? 'on' : 'off'}, gpuPref=${indexOptions.preferGpu ? 'on' : 'off (cpu mode)'}`);
     log('Connecting to SurrealDB...');
     await withTimeout(withSurreal(async (db) => db.query('RETURN 1;')), 5000, 'surreal precheck');
     const result = await withTimeout(withSurreal(async (db) => {
@@ -307,12 +406,11 @@ app.post('/api/index/:cacheId', async (req, res) => {
           }
         );
         documentCount += 1;
-        const chunks = chunkText(extracted.text, 1400);
+        const chunks = chunkText(extracted.text, indexOptions.chunkSize);
         const chunkJob = indexJobs.get(cacheId); if (chunkJob) { chunkJob.stage = 'indexing_chunks'; indexJobs.set(cacheId, chunkJob); }
         log(`Chunking ${file.originalName}: ${chunks.length} chunks`);
-        let i = 0;
-        for (const text of chunks) {
-          i += 1;
+        await mapLimit(chunks, indexOptions.parallelWorkers, async (text, idx) => {
+          const i = idx + 1;
           await db.query(
             'INSERT INTO chunk $data;',
             {
@@ -340,33 +438,35 @@ app.post('/api/index/:cacheId', async (req, res) => {
             }
           }
 
-          const analysis = analyzeChunk(text);
-          for (const entity of analysis.entities) {
-            await db.query('INSERT INTO entity $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...entity } });
-            entityCount += 1;
+          if (indexOptions.analysisEnabled) {
+            const analysis = analyzeChunk(text);
+            for (const entity of analysis.entities) {
+              await db.query('INSERT INTO entity $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...entity } });
+              entityCount += 1;
+            }
+            for (const ev of analysis.events) {
+              await db.query('INSERT INTO event $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...ev } });
+              eventCount += 1;
+            }
+            for (const act of (analysis.activities || [])) {
+              await db.query('INSERT INTO activity $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...act } });
+              activityCount += 1;
+            }
+            for (const intent of (analysis.intents || [])) {
+              await db.query('INSERT INTO intent $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...intent } });
+              intentCount += 1;
+            }
+            for (const an of analysis.anomalies) {
+              await db.query('INSERT INTO anomaly $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...an } });
+              anomalyCount += 1;
+            }
+            const relations = buildCooccurrenceRelations(analysis.entities);
+            for (const rel of relations) {
+              await db.query('INSERT INTO relation $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...rel } });
+              relationCount += 1;
+            }
           }
-          for (const ev of analysis.events) {
-            await db.query('INSERT INTO event $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...ev } });
-            eventCount += 1;
-          }
-          for (const act of (analysis.activities || [])) {
-            await db.query('INSERT INTO activity $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...act } });
-            activityCount += 1;
-          }
-          for (const intent of (analysis.intents || [])) {
-            await db.query('INSERT INTO intent $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...intent } });
-            intentCount += 1;
-          }
-          for (const an of analysis.anomalies) {
-            await db.query('INSERT INTO anomaly $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...an } });
-            anomalyCount += 1;
-          }
-          const relations = buildCooccurrenceRelations(analysis.entities);
-          for (const rel of relations) {
-            await db.query('INSERT INTO relation $data;', { data: { cacheId, fileId: file.id, filename: file.originalName, chunkIndex: i, ...rel } });
-            relationCount += 1;
-          }
-        }
+        });
         log(`Indexed ${file.originalName}: ${summary.wordCount} words, ${chunks.length} chunks, entities=${entityCount}, events=${eventCount}, activities=${activityCount}, intents=${intentCount}, anomalies=${anomalyCount} (method: ${extracted.method || 'unknown'}).`);
         const job2 = indexJobs.get(cacheId);
         if (job2) {
@@ -408,6 +508,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
       indexedAt: new Date().toISOString(),
       status: 'ready',
       strategy: { name: indexStrategy, notes: indexStrategyNotes },
+      options: indexOptions,
       indexingExplanation: [
         '1) Extract readable text from each file.',
         '2) Create document metadata rows (filename, size, word counts).',
@@ -425,6 +526,16 @@ app.post('/api/index/:cacheId', async (req, res) => {
     cache.readyForQuestions = true;
     cache.updatedAt = new Date().toISOString();
     cache.indexStats = result;
+    const finishedJob = indexJobs.get(cacheId);
+    const durationSec = Math.max(1, Math.round((Date.now() - (finishedJob?.startedAtMs || Date.now())) / 1000));
+    const totalBytes = (cache.files || []).reduce((sum, f) => sum + (Number(f.size) || 0), 0);
+    cache.indexPerformance = {
+      durationSec,
+      totalBytes,
+      bytesPerSec: Math.floor(totalBytes / durationSec),
+      indexedAt: new Date().toISOString(),
+      indexOptions
+    };
     cache.lastSummary = quickSummary;
     writeCaches(data);
     const doneJob = indexJobs.get(cacheId);

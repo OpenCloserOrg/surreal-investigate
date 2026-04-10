@@ -3,9 +3,13 @@ const $ = (id) => document.getElementById(id);
 let activeChatId = '';
 let initializedNewChatForCache = new Set();
 let liveTrace = [];
+let recommendedIndexOptions = null;
 
 function ext(name=''){ const p=name.split('.'); return p.length>1 ? p.pop().toLowerCase() : ''; }
 function bytes(n=0){ if(n<1024) return `${n} B`; if(n<1048576) return `${(n/1024).toFixed(1)} KB`; if(n<1073741824) return `${(n/1048576).toFixed(1)} MB`; return `${(n/1073741824).toFixed(2)} GB`; }
+function duration(sec=0){ const s=Math.max(0, Math.round(Number(sec)||0)); if(s<60) return `${s}s`; const m=Math.floor(s/60); const r=s%60; if(m<60) return `${m}m ${r}s`; const h=Math.floor(m/60); return `${h}h ${m%60}m`; }
+function currentIndexOptions(){ return { chunkSize: Number($('chunk-size').value || 1400), parallelWorkers: Number($('parallel-workers').value || 1), analysisEnabled: $('analysis-enabled').checked, preferGpu: $('prefer-gpu').checked }; }
+function renderTuningLabels(){ $('chunk-size-value').textContent = $('chunk-size').value; $('workers-value').textContent = $('parallel-workers').value; }
 function selectedCacheId(){ return $('cache-select').value; }
 function setProgress(v=0){ $('index-progress').style.width = `${Math.max(0, Math.min(100, v))}%`; }
 function relTime(iso=''){ const d=new Date(iso); const s=Math.floor((Date.now()-d.getTime())/1000); if(!iso||Number.isNaN(d.getTime())) return ''; if(s<60) return `${s}s ago`; if(s<3600) return `${Math.floor(s/60)}m ago`; if(s<86400) return `${Math.floor(s/3600)}h ago`; return `${Math.floor(s/86400)}d ago`; }
@@ -44,6 +48,29 @@ function setTraceStep(step, state, detail){
 function loadOpenRouter(){ $('or-key').value=localStorage.getItem('openrouter.key')||''; $('or-model').value=localStorage.getItem('openrouter.model')||'openai/gpt-4o-mini'; }
 function updateQuestionPlaceholder(){ $('question').placeholder = $('query-mode').value === 'surreal' ? 'Search term(s)' : 'Ask a follow-up question'; }
 $('query-mode').onchange = updateQuestionPlaceholder;
+$('chunk-size').oninput = renderTuningLabels;
+$('parallel-workers').oninput = renderTuningLabels;
+
+$('recommend-index-settings').onclick = async ()=>{
+  const cacheId = selectedCacheId(); if(!cacheId) return;
+  $('index-recommendation').textContent = 'Calculating recommendation...';
+  const r = await fetch(`/api/index-recommendation/${cacheId}`);
+  const j = await r.json();
+  if (!r.ok || !j.ok) { $('index-recommendation').textContent = `Recommendation failed: ${j.error||'unknown'}`; return; }
+  recommendedIndexOptions = j.recommended;
+  $('use-recommended').disabled = false;
+  $('index-recommendation').textContent = `Recommended: chunk ${j.recommended.chunkSize}, workers ${j.recommended.parallelWorkers}. Estimated improvement ~${j.estimate.savedPct}% (${duration(j.estimate.currentEtaSec)} → ${duration(j.estimate.predictedEtaSec)}).`;
+  $('index-log').textContent = `Recommendation rationale:\n- ${j.rationale.join('\n- ')}\n\nSystem: ${j.system.cpuCount} CPU threads, ${j.system.availableMemGb} GB free RAM.`;
+};
+
+$('use-recommended').onclick = ()=>{
+  if (!recommendedIndexOptions) return;
+  $('chunk-size').value = String(recommendedIndexOptions.chunkSize || 1400);
+  $('parallel-workers').value = String(recommendedIndexOptions.parallelWorkers || 1);
+  $('analysis-enabled').checked = recommendedIndexOptions.analysisEnabled !== false;
+  $('prefer-gpu').checked = Boolean(recommendedIndexOptions.preferGpu);
+  renderTuningLabels();
+};
 
 function renderThread(messages=[]){
   const el = $('chat-thread');
@@ -182,7 +209,7 @@ $('index-btn').onclick=async()=>{
   await pollProgress();
   const ticker = setInterval(pollProgress, 1200);
 
-  const r=await fetch(`/api/index/${cacheId}`,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ indexStrategy: $('index-strategy').value, indexStrategyNotes: $('index-strategy-notes').value.trim() }) });
+  const r=await fetch(`/api/index/${cacheId}`,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ indexStrategy: $('index-strategy').value, indexStrategyNotes: $('index-strategy-notes').value.trim(), indexOptions: currentIndexOptions() }) });
   const j=await r.json();
   stopped = true;
   clearInterval(ticker);
@@ -293,4 +320,4 @@ $('ask-btn').onclick=async()=>{
   $('question').value='';
 };
 
-(async()=>{ loadOpenRouter(); updateQuestionPlaceholder(); await fetchCaches(); await checkSurreal(); })();
+(async()=>{ loadOpenRouter(); updateQuestionPlaceholder(); renderTuningLabels(); await fetchCaches(); await checkSurreal(); })();

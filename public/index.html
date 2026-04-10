@@ -61,6 +61,21 @@
         <button id="load-existing-index">Load Existing Index</button>
         <button id="index-btn">Create / Refresh Index</button>
       </div>
+      <div class="tuning-grid">
+        <label>Chunk size <span id="chunk-size-value">1400</span>
+          <input id="chunk-size" type="range" min="300" max="8000" step="100" value="1400" />
+        </label>
+        <label>Parallel workers <span id="workers-value">1</span>
+          <input id="parallel-workers" type="range" min="1" max="24" step="1" value="1" />
+        </label>
+      </div>
+      <div class="row">
+        <label><input id="analysis-enabled" type="checkbox" checked /> Run entity/event/anomaly analysis</label>
+        <label><input id="prefer-gpu" type="checkbox" /> Prefer GPU (future mode)</label>
+        <button id="recommend-index-settings">Recommend</button>
+        <button id="use-recommended" disabled>Use Recommended</button>
+      </div>
+      <p class="muted" id="index-recommendation">No recommendation loaded yet.</p>
       <div class="progress-wrap"><div id="index-progress" class="progress"></div></div>
       <p>SurrealDB: <span id="surreal-dot" class="dot red"></span> <span id="surreal-status">Not checked</span></p>
       <p class="muted" id="index-estimate">No active indexing job.</p>
