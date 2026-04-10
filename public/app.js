@@ -312,9 +312,9 @@ function renderUploadedFilePreview(files = []) {
     const ok = f.supported !== false;
     const sample = String(f.samplePreview || '').trim();
     const btn = sample ? `<button class="sugg-btn view-sample" data-sample="${sample.replace(/"/g,'&quot;')}" data-method="${String(f.extractionMethod||'unknown').replace(/"/g,'&quot;')}" data-path="${String(f.path||'').replace(/"/g,'&quot;')}">View</button>` : '<span class="muted">No text</span>';
-    const trash = f.id ? `<button class="sugg-btn del-file" data-file-id="${String(f.id)}" style="border-color:#7a2e2e;color:#ffb3b3">🗑</button>` : '';
+    const trash = f.id ? `<button class="sugg-btn del-file" data-file-id="${String(f.id)}" style="border-color:#7a2e2e;color:#ffb3b3">🗑</button>` : '<span class="muted">—</span>';
     const chars = Number(f.extractedChars || sample.length || 0);
-    return `<tr><td>${(f.originalName||f.name||'').replace(/</g,'&lt;')}</td><td>${e||'unknown'}</td><td>${bytes(Number(f.size||0))}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td><td>${chars}</td><td>${btn} ${trash}</td></tr>`;
+    return `<tr><td>${(f.originalName||f.name||'').replace(/</g,'&lt;')}</td><td>${e||'unknown'}</td><td>${bytes(Number(f.size||0))}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td><td>${chars}</td><td>${btn}</td><td>${trash}</td></tr>`;
   }).join('');
   document.querySelectorAll('.view-sample').forEach((btn)=>{ btn.onclick=()=>showTraceModal('Sample text preview (first 200 chars)', { extractionMethod: btn.getAttribute('data-method') || 'unknown', storedPath: btn.getAttribute('data-path') || '', sample: btn.getAttribute('data-sample') || '' }); });
   document.querySelectorAll('.del-file').forEach((btn)=>{
@@ -454,7 +454,7 @@ $('chat-select').onchange = async ()=> { activeChatId = $('chat-select').value; 
 $('new-chat').onclick = async ()=>{ const cacheId = selectedCacheId(); if(!cacheId) return; const j = await createNewChatForCache(cacheId, `Session ${new Date().toLocaleString()}`); activeChatId = j.chatId; await fetchChats(); $('query-status').textContent = 'New chat created.'; };
 
 $('create-cache').onclick=async()=>{ const label=$('cache-label').value.trim(); if(!label) return; await fetch('/api/caches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label})}); $('cache-label').value=''; await fetchCaches(); };
-$('file-input').onchange=()=>{ const files=[...$('file-input').files]; $('file-preview').innerHTML=files.map(f=>{ const e=ext(f.name); const ok=supported.includes(e); return `<tr><td>${f.name}</td><td>${e||'unknown'}</td><td>${bytes(f.size)}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td><td>pending</td><td><span class="muted">Preview after upload</span></td></tr>`; }).join(''); applyGateState(); };
+$('file-input').onchange=()=>{ const files=[...$('file-input').files]; $('file-preview').innerHTML=files.map(f=>{ const e=ext(f.name); const ok=supported.includes(e); return `<tr><td>${f.name}</td><td>${e||'unknown'}</td><td>${bytes(f.size)}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td><td>pending</td><td><span class="muted">Preview after upload</span></td><td><span class="muted">—</span></td></tr>`; }).join(''); applyGateState(); };
 
 async function uploadSelectedFilesIfAny(){
   const cacheId=selectedCacheId(); const files=[...$('file-input').files]; if(!cacheId || !files.length) return { uploaded: 0, skipped: true };
