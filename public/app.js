@@ -268,11 +268,12 @@ function renderUploadedFilePreview(files = []) {
     const e = ext(f.originalName || f.name || '');
     const ok = f.supported !== false;
     const sample = String(f.samplePreview || '').trim();
-    const btn = sample ? `<button class="sugg-btn view-sample" data-sample="${sample.replace(/"/g,'&quot;')}">View</button>` : '<span class="muted">No text</span>';
+    const btn = sample ? `<button class="sugg-btn view-sample" data-sample="${sample.replace(/"/g,'&quot;')}" data-method="${String(f.extractionMethod||'unknown').replace(/"/g,'&quot;')}" data-path="${String(f.path||'').replace(/"/g,'&quot;')}">View</button>` : '<span class="muted">No text</span>';
     const trash = f.id ? `<button class="sugg-btn del-file" data-file-id="${String(f.id)}" style="border-color:#7a2e2e;color:#ffb3b3">🗑</button>` : '';
-    return `<tr><td>${(f.originalName||f.name||'').replace(/</g,'&lt;')}</td><td>${e||'unknown'}</td><td>${bytes(Number(f.size||0))}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td><td>${btn} ${trash}</td></tr>`;
+    const chars = Number(f.extractedChars || sample.length || 0);
+    return `<tr><td>${(f.originalName||f.name||'').replace(/</g,'&lt;')}</td><td>${e||'unknown'}</td><td>${bytes(Number(f.size||0))}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td><td>${chars}</td><td>${btn} ${trash}</td></tr>`;
   }).join('');
-  document.querySelectorAll('.view-sample').forEach((btn)=>{ btn.onclick=()=>showTraceModal('Sample text preview (first 200 chars)', btn.getAttribute('data-sample') || ''); });
+  document.querySelectorAll('.view-sample').forEach((btn)=>{ btn.onclick=()=>showTraceModal('Sample text preview (first 200 chars)', { extractionMethod: btn.getAttribute('data-method') || 'unknown', storedPath: btn.getAttribute('data-path') || '', sample: btn.getAttribute('data-sample') || '' }); });
   document.querySelectorAll('.del-file').forEach((btn)=>{
     btn.onclick = async ()=>{
       if (!cacheId) return;
@@ -300,7 +301,7 @@ async function runQuickSummary(cacheId){
   if (!r.ok || !j.ok) { $('quick-file-summary').textContent = `Summary failed: ${j.error||'unknown'}`; return; }
   $('quick-file-summary').textContent = j.summary || 'No summary.';
   if (Array.isArray(j.snippets)) {
-    const activeRows = j.snippets.map((s)=>({ originalName: s.filename, size: 0, supported: true, samplePreview: s.sample }));
+    const activeRows = j.snippets.map((s)=>({ originalName: s.filename, size: 0, supported: true, samplePreview: s.sample, extractedChars: s.extractedChars || 0, extractionMethod: s.extractionMethod || 'unknown', path: s.storedPath || '' }));
     const existing = [...$('file-preview').querySelectorAll('tr')];
     if (!existing.length) renderUploadedFilePreview(activeRows);
   }
@@ -328,6 +329,16 @@ $('trace-modal-close').onclick = hideTraceModal;
 $('trace-modal').onclick = (e)=>{ if(e.target.id==='trace-modal') hideTraceModal(); };
 $('confirm-modal').onclick = (e)=>{ if(e.target.id==='confirm-modal') $('confirm-modal').classList.add('hidden'); };
 $('ping-or').onclick=async()=>{ $('or-status').textContent='Pinging...'; const r=await fetch('/api/openrouter/ping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:$('or-key').value.trim(),model:$('or-model').value.trim()})}); const j=await r.json(); if(r.ok&&j.ok){ $('or-dot').className='dot green'; $('or-status').textContent='OpenRouter reachable'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`Ping failed: ${j.error||'unknown'}`; }};
+$('example-pricing').onclick = ()=>showTraceModal('Pricing Data Example Feature Plan', {
+  dataset: 'Large OHLCV pricing CSV/Excel (open/high/low/close/volume)',
+  featurePlanFocus: ['asset entities', 'price move events', 'drawdown anomalies', 'cross-asset relations'],
+  sampleQuestion: 'When two assets are both down and correlation drops, what has positive movement 80% of the time?'
+});
+$('example-shipping').onclick = ()=>showTraceModal('Ship Movement Example Feature Plan', {
+  dataset: 'AIS/ship movement CSV (timestamp, latitude, longitude, vessel type, port)',
+  featurePlanFocus: ['ship entities', 'movement events', 'route clusters', 'lead-lag relation edges'],
+  sampleQuestion: 'When ship A activity falls, which other ship types move less in the next 30 days?'
+});
 
 async function createNewChatForCache(cacheId, title='New session'){ const r = await fetch(`/api/chats/${cacheId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ title }) }); return r.json(); }
 
@@ -351,9 +362,9 @@ async function fetchCaches(){
   const prior = selectedCacheId();
   const r=await fetch('/api/caches'); const j=await r.json(); const list=j.caches||[];
   $('cache-list').innerHTML=list.map(c=>`<li><button class="sugg-btn cache-jump" data-cache-id="${c.id}"><strong>${c.label}</strong> <span class="muted">(${c.id}) · ${c.files?.length||0} files · ${c.readyForQuestions?'ready':'not-ready'}</span></button></li>`).join('') || '<li class="muted">No caches yet</li>';
-  $('cache-select').innerHTML=list.map(c=>`<option value="${c.id}">${c.label}</option>`).join('');
+  $('cache-select').innerHTML=`<option value="">Select a cache...</option>` + list.map(c=>`<option value="${c.id}">${c.label}</option>`).join('');
   if (prior && list.some(c=>c.id===prior)) $('cache-select').value = prior;
-  const active=list.find(c=>c.id===selectedCacheId()) || list[0];
+  const active=list.find(c=>c.id===selectedCacheId()) || null;
   currentCache = active || null;
   $('active-cache-label').textContent = active ? `${active.label} (${active.id})` : 'None';
   $('ready-state').textContent=active?.readyForQuestions ? 'Ready for questions ✅' : 'Not ready for questions';
@@ -365,9 +376,8 @@ async function fetchCaches(){
       const cid = btn.getAttribute('data-cache-id');
       if (!cid) return;
       $('cache-select').value = cid;
+      $('cache-select').dispatchEvent(new Event('change'));
       const selected = list.find((c) => c.id === cid);
-      $('active-cache-label').textContent = selected ? `${selected.label} (${selected.id})` : 'None';
-      await fetchChats();
       if (!selected || !(selected.files || []).length) scrollToSection('section-upload');
       else if (!selected.readyForQuestions) scrollToSection('section-index');
       else scrollToSection('section-ask');
@@ -383,7 +393,7 @@ $('chat-select').onchange = async ()=> { activeChatId = $('chat-select').value; 
 $('new-chat').onclick = async ()=>{ const cacheId = selectedCacheId(); if(!cacheId) return; const j = await createNewChatForCache(cacheId, `Session ${new Date().toLocaleString()}`); activeChatId = j.chatId; await fetchChats(); $('query-status').textContent = 'New chat created.'; };
 
 $('create-cache').onclick=async()=>{ const label=$('cache-label').value.trim(); if(!label) return; await fetch('/api/caches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label})}); $('cache-label').value=''; await fetchCaches(); };
-$('file-input').onchange=()=>{ const files=[...$('file-input').files]; $('file-preview').innerHTML=files.map(f=>{ const e=ext(f.name); const ok=supported.includes(e); return `<tr><td>${f.name}</td><td>${e||'unknown'}</td><td>${bytes(f.size)}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td><td><span class="muted">Preview after upload</span></td></tr>`; }).join(''); applyGateState(); };
+$('file-input').onchange=()=>{ const files=[...$('file-input').files]; $('file-preview').innerHTML=files.map(f=>{ const e=ext(f.name); const ok=supported.includes(e); return `<tr><td>${f.name}</td><td>${e||'unknown'}</td><td>${bytes(f.size)}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td><td>pending</td><td><span class="muted">Preview after upload</span></td></tr>`; }).join(''); applyGateState(); };
 
 async function uploadSelectedFilesIfAny(){
   const cacheId=selectedCacheId(); const files=[...$('file-input').files]; if(!cacheId || !files.length) return { uploaded: 0, skipped: true };
@@ -567,4 +577,4 @@ $('ask-btn').onclick=async()=>{
   $('question').value='';
 };
 
-(async()=>{ loadOpenRouter(); updateQuestionPlaceholder(); renderTuningLabels(); await fetchCaches(); await checkSurreal(); if (selectedCacheId()) await runQuickSummary(selectedCacheId()); })();
+(async()=>{ loadOpenRouter(); updateQuestionPlaceholder(); renderTuningLabels(); await fetchCaches(); await checkSurreal(); })();

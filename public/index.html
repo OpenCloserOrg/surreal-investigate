@@ -12,6 +12,21 @@
     <h1>Surreal Investigate</h1>
     <p class="muted">Build local investigation caches, index with SurrealDB, then ask questions.</p>
 
+    <section class="card" id="section-workflow">
+      <h2>Workflow + File Handling</h2>
+      <p class="guide"><i class="fa-regular fa-lightbulb"></i> <strong>Guidance:</strong> Follow this sequence: Upload → Generate Feature Plans → Index → Ask Questions. Files are copied to <code>uploads/&lt;cacheId&gt;/</code>, index artifacts are written under <code>indexes/&lt;cacheId&gt;/</code>, and the index manifest is <code>indexes/&lt;cacheId&gt;/manifest.json</code>.</p>
+      <ol class="muted">
+        <li><strong>Upload:</strong> attach files to cache (selection alone does nothing).</li>
+        <li><strong>Feature Plans:</strong> generate extraction mapping + lexicon + table intents.</li>
+        <li><strong>Index:</strong> writes structured rows to SurrealDB tables.</li>
+        <li><strong>Ask:</strong> run retrieval + reasoning on indexed data.</li>
+      </ol>
+      <div class="row">
+        <button id="example-pricing">See Pricing Example Feature Plan</button>
+        <button id="example-shipping">See Ship Movement Example Feature Plan</button>
+      </div>
+    </section>
+
     <section class="card">
       <h2>OpenRouter</h2>
       <div class="row">
@@ -43,7 +58,7 @@
       </div>
       <p class="muted" id="upload-status">Select files, then click Upload.</p>
       <table>
-        <thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Supported</th><th>Sample text</th></tr></thead>
+        <thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Supported</th><th>Extracted chars</th><th>Sample text</th></tr></thead>
         <tbody id="file-preview"></tbody>
       </table>
     </section>

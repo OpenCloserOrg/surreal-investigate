@@ -366,11 +366,13 @@ app.post('/api/upload', upload.array('files', 400), async (req, res) => {
   for (const f of (req.files || [])) {
     let samplePreview = '';
     let extractedWords = 0;
+    let extractedChars = 0;
     let extractionMethod = '';
     try {
       const extracted = await extractTextFromFile(f.path, f.originalname);
       const words = String(extracted.text || '').split(/\s+/).filter(Boolean);
       extractedWords = words.length;
+      extractedChars = String(extracted.text || '').length;
       extractionMethod = extracted.method || 'unknown';
       samplePreview = String(extracted.text || '').slice(0, 200);
     } catch {}
@@ -386,6 +388,7 @@ app.post('/api/upload', upload.array('files', 400), async (req, res) => {
       supported: isSupported(f.originalname),
       samplePreview,
       extractedWords,
+      extractedChars,
       extractionMethod,
       uploadedAt: new Date().toISOString()
     });
@@ -918,7 +921,9 @@ app.post('/api/cache-quick-summary/:cacheId', async (req, res) => {
   const snippets = files.map((f) => ({
     filename: f.originalName,
     extractedWords: Number(f.extractedWords || 0),
+    extractedChars: Number(f.extractedChars || 0),
     extractionMethod: f.extractionMethod || 'unknown',
+    storedPath: f.path || '',
     sample: String(f.samplePreview || '').slice(0, 220)
   }));
   const readable = snippets.filter((s) => s.extractedWords > 0 && s.sample.trim());
