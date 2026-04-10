@@ -440,6 +440,14 @@ $('example-pricing').onclick = ()=>showTraceModal('Financial Market Feature Plan
     'Which indicator combinations have the highest conditional win-rate after 3-day drawdowns?'
   ]
 });
+$('query-strategy-help').onclick = ()=>showTraceModal('Query Strategy Modes', {
+  balanced: 'Default mix of relevant chunk retrieval + structured Surreal tables.',
+  'broad-discovery': 'Wider retrieval scope for exploration; may include weaker matches.',
+  'high-precision': 'Stricter matching with fewer but more exact candidates.',
+  timeline: 'Prioritizes event/activity ordering over broad thematic recall.',
+  custom: 'Uses your custom notes to bias retrieval/ranking behavior.'
+});
+
 $('example-shipping').onclick = ()=>showTraceModal('Ship Movement Feature Plan (Case Study)', {
   dataset: 'AIS movement CSV (timestamp, vessel_id, vessel_type, latitude, longitude, speed, heading, port_call, cargo status).',
   extractionMapping: ['vessel_id -> entity(ship)', 'lat/lon/time rows -> event(movement_point)', 'port transitions -> activity(route_leg)', 'co-movement windows -> relation(lead-lag/correlation)'],
@@ -617,15 +625,15 @@ $('ask-btn').onclick=async()=>{
 
   liveTrace = [];
   setTraceStep('parse_query', 'running', {
-    explanation: 'Prepare request plan (mode/strategy/chat) and package payload for /api/query.',
+    explanation: 'Parse user intent + strategy, then build retrieval plan for Surreal tables/chunks and optional AI synthesis.',
     request: { url: `/api/query/${cacheId}`, payload: { ...payload, openRouterKey: payload.openRouterKey ? '***' : '' } }
   });
   setTraceStep('surreal_precheck', 'pending', {
-    explanation: 'Ping SurrealDB before heavy retrieval calls.',
+    explanation: 'Surreal pre-check verifies DB connectivity first (RETURN 1) so we fail fast before retrieval/model calls.',
     request: { url: '/api/surreal/health', query: 'RETURN 1;' }
   });
   setTraceStep('surreal_retrieval', 'pending', {
-    explanation: 'Query chunk + structured tables and rank candidates.',
+    explanation: 'Retrieve candidate chunks + structured signals (entity/event/activity/intent/relation/anomaly) and rank by query relevance.',
     request: { queryTemplate: 'SELECT fileId, filename, chunkIndex, text FROM chunk WHERE cacheId = $cacheId LIMIT 3000;' }
   });
   if (mode === 'ai') {

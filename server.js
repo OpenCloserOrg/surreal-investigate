@@ -889,8 +889,11 @@ Return:
       model,
       url: AI_PROVIDER_URL,
       request: {
+        method: 'POST',
+        url: AI_PROVIDER_URL,
+        headers: { Authorization: `Bearer ${maskKey(apiKey)}`, 'Content-Type': 'application/json' },
         payloadBytes: aiRequestBody.length,
-        bodyPreview: aiRequestBody.slice(0, 1400)
+        body: JSON.parse(aiRequestBody)
       }
     });
     pushTrace('openrouter_awaiting_response', { explanation: 'Waiting for model completion from OpenRouter.' });
@@ -1216,7 +1219,7 @@ app.post('/api/suggest-questions/:cacheId', async (req, res) => {
     const suggestions = [
       names.length >= 2 ? `Why did ${names[0]} communicate with ${names[1]}?` : null,
       orgs.length ? `What role does ${orgs[0]} play across the dataset?` : null,
-      retrieval.events.length ? 'Which money flows look unusual or fragmented?' : null,
+      retrieval.events.length ? 'Which event patterns look unusual, fragmented, or weakly explained?' : null,
       retrieval.activities.length ? 'What is the sequence of key activities over time?' : null,
       topAn.length ? `What evidence supports potential ${topAn[0]} risk?` : null,
       'What major gaps or unknowns remain in this dataset?'
