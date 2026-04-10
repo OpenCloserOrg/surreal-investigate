@@ -39,12 +39,16 @@ When fully running, you can:
 - Convert natural-language questions to SurrealQL against current cache schema
 - View current cache schema (table fields) in-app
 - Index strategy controls (preset + custom notes)
-- Data model + indexing strategy plan generation (main-topic/comprehensive/all-inclusive) with extraction mapping + lexicon + table write intents
-- AI request preview for feature-plan generation (prompt + sampled chunks + payload)
+- Data model + indexing strategy plan generation (main-topic/comprehensive/all-inclusive) with extraction mapping + lexicon + suppressions + priority relationships
+- AI request preview for planning and outbound provider payload visibility
 - Chat persistence per cache in `chat-logs/<cache-id>/<chat-id>.json`
 - Continue conversations with context from prior turns in each chat
-- OpenRouter key/model local storage
+- OpenRouter key/model local storage + env-credential mode
 - OpenRouter ping health check (green/red)
+- Query cookbook UI (vector / relationship / time-window / anomaly patterns)
+- SurrealQL conversion output panel + copy button
+- Schema viewer + indexed-table export download
+- OpenCLAW configuration export button + bundled operator skill docs (`openclaw/`)
 - Manifest persistence:
   - `indexes/<cache-id>/manifest.json`
   - `indexes/<cache-id>/snapshots/<timestamp>.json`
@@ -173,6 +177,13 @@ AI_MODEL=qwen/qwen3-32b
 - `POST /api/index/feature-plans/:cacheId`
 - `GET /api/index-recommendation/:cacheId`
 - `POST /api/index/:cacheId`
+- `GET /api/index-progress/:cacheId`
+- `GET /api/index-manifest/:cacheId`
+- `GET /api/index-data-export/:cacheId`
+- `POST /api/index-diagnose/:cacheId`
+- `GET /api/schema/:cacheId`
+- `POST /api/convert-surrealql/:cacheId`
+- `GET /api/openclaw-skill/:cacheId`
 - `GET /api/index-profile/:cacheId`
 - `POST /api/index-profile/:cacheId`
 - `DELETE /api/index-profile/:cacheId`
@@ -206,8 +217,8 @@ surreal-investigate/
 
 ## Next planned upgrades
 
-- Add `.docx .xlsx .pdf` extraction adapters
-- Better entity/relation extraction into dedicated tables
+- Recipe-specific relationship builders by dataset class (narrative/report/structured/geo/communications)
+- Strong extraction-quality gates before "ready for questions"
+- Read-only execution mode for generated SurrealQL
 - Query timeline visualization and relationship map
-- Background job queue for very large imports
-- Render deploy profile and health checks
+- Additional provider adapters (OpenAI/Anthropic/Together/local)
