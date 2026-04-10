@@ -91,6 +91,15 @@ function setProgress(v=0){ $('index-progress').style.width = `${Math.max(0, Math
 function relTime(iso=''){ const d=new Date(iso); const s=Math.floor((Date.now()-d.getTime())/1000); if(!iso||Number.isNaN(d.getTime())) return ''; if(s<60) return `${s}s ago`; if(s<3600) return `${Math.floor(s/60)}m ago`; if(s<86400) return `${Math.floor(s/3600)}h ago`; return `${Math.floor(s/86400)}d ago`; }
 function scrollToSection(id){ const el=$(id); if(el) el.scrollIntoView({ behavior:'smooth', block:'start' }); }
 
+function updateAskArtifactInfo(){
+  if (!currentCache?.id) { $('ask-index-artifact').textContent = 'No index artifact selected yet.'; return; }
+  const ready = currentCache?.readyForQuestions;
+  const path = `indexes/${currentCache.id}/manifest.json`;
+  $('ask-index-artifact').textContent = ready
+    ? `Using index manifest: ${path}`
+    : `Index not ready yet. Expected artifact path after indexing: ${path}`;
+}
+
 function notifyBlocked(target){
   const tips = {
     index: 'Upload files to the selected cache first, then run Create / Refresh Index.',
@@ -128,6 +137,7 @@ function applyGateState(){
 
   $('ask-btn').dataset.locked = (!hasCacheSelected || !isIndexed) ? '1' : '0';
   $('suggest-btn').dataset.locked = (!hasCacheSelected || !isIndexed) ? '1' : '0';
+  $('download-manifest').disabled = !hasCacheSelected;
   $('query-mode').disabled = !hasCacheSelected || !isIndexed;
   $('query-strategy').disabled = !hasCacheSelected || !isIndexed;
   $('query-strategy-notes').disabled = !hasCacheSelected || !isIndexed;
@@ -440,6 +450,22 @@ $('example-pricing').onclick = ()=>showTraceModal('Financial Market Feature Plan
     'Which indicator combinations have the highest conditional win-rate after 3-day drawdowns?'
   ]
 });
+$('download-manifest').onclick = async ()=>{
+  const cacheId = selectedCacheId();
+  if (!cacheId) return notifyBlocked('ask');
+  const r = await fetch(`/api/index-manifest/${cacheId}`);
+  const j = await r.json();
+  if (!r.ok || !j.ok) { $('query-status').textContent = `Manifest download failed: ${j.error||'unknown'}`; return; }
+  const blob = new Blob([JSON.stringify(j.manifest, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${cacheId}-manifest.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+$('redo-index-flow').onclick = ()=> scrollToSection('section-index');
+
 $('query-strategy-help').onclick = ()=>showTraceModal('Query Strategy Modes', {
   balanced: 'Default mix of relevant chunk retrieval + structured Surreal tables.',
   'broad-discovery': 'Wider retrieval scope for exploration; may include weaker matches.',
@@ -489,6 +515,7 @@ async function fetchCaches(){
   $('ready-state').textContent=active?.readyForQuestions ? 'Ready for questions ✅' : 'Not ready for questions';
   renderUploadedFilePreview(active?.files || []);
   applyGateState();
+  updateAskArtifactInfo();
 
   document.querySelectorAll('.cache-jump').forEach((btn) => {
     btn.onclick = async () => {
@@ -507,7 +534,7 @@ async function fetchCaches(){
   if (active?.id) await loadActiveProfile(active.id); else clearActiveProfileUI();
 }
 
-$('cache-select').onchange = async ()=> { const list=await (await fetch('/api/caches')).json(); const c=(list.caches||[]).find(x=>x.id===selectedCacheId()); currentCache = c || null; $('active-cache-label').textContent = c ? `${c.label} (${c.id})` : 'None'; renderUploadedFilePreview(c?.files || []); applyGateState(); await fetchChats(); await checkSurreal(); if (c?.id) await loadActiveProfile(c.id); if ((c?.files||[]).length) await runQuickSummary(c.id); };
+$('cache-select').onchange = async ()=> { const list=await (await fetch('/api/caches')).json(); const c=(list.caches||[]).find(x=>x.id===selectedCacheId()); currentCache = c || null; $('active-cache-label').textContent = c ? `${c.label} (${c.id})` : 'None'; renderUploadedFilePreview(c?.files || []); applyGateState(); updateAskArtifactInfo(); await fetchChats(); await checkSurreal(); if (c?.id) await loadActiveProfile(c.id); if ((c?.files||[]).length) await runQuickSummary(c.id); };
 $('chat-select').onchange = async ()=> { activeChatId = $('chat-select').value; await loadChatMessages(); };
 $('new-chat').onclick = async ()=>{ const cacheId = selectedCacheId(); if(!cacheId) return; const j = await createNewChatForCache(cacheId, `Session ${new Date().toLocaleString()}`); activeChatId = j.chatId; await fetchChats(); $('query-status').textContent = 'New chat created.'; };
 

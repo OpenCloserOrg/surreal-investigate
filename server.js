@@ -295,6 +295,18 @@ app.delete('/api/index-profile/:cacheId', (req, res) => {
   writeCaches(data);
   return res.json({ ok: true });
 });
+app.get('/api/index-manifest/:cacheId', (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const manifestPath = path.join(INDEXES_DIR, cacheId, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) return res.status(404).json({ ok: false, error: 'manifest not found' });
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    return res.json({ ok: true, cacheId, manifestPath: path.relative(ROOT, manifestPath), manifest });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message || 'manifest read failed' });
+  }
+});
+
 app.get('/api/index-progress/:cacheId', (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
   const job = indexJobs.get(cacheId);
