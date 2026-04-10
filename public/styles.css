@@ -7,6 +7,7 @@ input{min-width:220px}button{cursor:pointer}table{width:100%;border-collapse:col
 .tuning-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin:10px 0}
 .tuning-grid label{display:flex;flex-direction:column;gap:8px;background:#10161f;border:1px solid #2a3140;padding:10px;border-radius:8px}
 input[type="range"]{width:100%}
+button[data-locked="1"]{opacity:.65;cursor:not-allowed}
 .progress{height:100%;width:0%;background:linear-gradient(90deg,#2f80ed,#12b76a);transition:width .25s ease}
 .chat-thread{border:1px solid #2a3140;background:#0d1117;border-radius:8px;min-height:120px;max-height:340px;overflow:auto;padding:10px;margin:10px 0}
 .msg{padding:10px 12px;border-radius:10px;margin:10px 0;max-width:92%;line-height:1.45;white-space:pre-wrap}

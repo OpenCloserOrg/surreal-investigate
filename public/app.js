@@ -6,6 +6,7 @@ let liveTrace = [];
 let recommendedIndexOptions = null;
 let featurePlansState = [];
 let activeIndexProfile = null;
+let currentCache = null;
 
 function ext(name=''){ const p=name.split('.'); return p.length>1 ? p.pop().toLowerCase() : ''; }
 function bytes(n=0){ if(n<1024) return `${n} B`; if(n<1048576) return `${(n/1024).toFixed(1)} KB`; if(n<1073741824) return `${(n/1048576).toFixed(1)} MB`; return `${(n/1073741824).toFixed(2)} GB`; }
@@ -78,6 +79,42 @@ function setProgress(v=0){ $('index-progress').style.width = `${Math.max(0, Math
 function relTime(iso=''){ const d=new Date(iso); const s=Math.floor((Date.now()-d.getTime())/1000); if(!iso||Number.isNaN(d.getTime())) return ''; if(s<60) return `${s}s ago`; if(s<3600) return `${Math.floor(s/60)}m ago`; if(s<86400) return `${Math.floor(s/3600)}h ago`; return `${Math.floor(s/86400)}d ago`; }
 function scrollToSection(id){ const el=$(id); if(el) el.scrollIntoView({ behavior:'smooth', block:'start' }); }
 
+function notifyBlocked(target){
+  const tips = {
+    index: 'Upload files to the selected cache first, then run Create / Refresh Index.',
+    plans: 'Upload files first so feature plans can sample real content.',
+    ask: 'Index the cache first. Ask Questions unlocks after indexing is complete.'
+  };
+  const msg = tips[target] || 'Complete the required previous step first.';
+  $('upload-status').textContent = msg;
+  $('query-status').textContent = msg;
+}
+
+function applyGateState(){
+  const selectedLocalFiles = [...($('file-input')?.files || [])].length;
+  const hasUploadedFiles = Boolean((currentCache?.files || []).length);
+  const isIndexed = Boolean(currentCache?.readyForQuestions);
+
+  $('index-btn').dataset.locked = (!hasUploadedFiles && !selectedLocalFiles) ? '1' : '0';
+  $('load-existing-index').dataset.locked = (!hasUploadedFiles) ? '1' : '0';
+  $('generate-feature-plans').dataset.locked = (!hasUploadedFiles) ? '1' : '0';
+  $('recommend-index-settings').dataset.locked = (!hasUploadedFiles) ? '1' : '0';
+
+  $('ask-btn').dataset.locked = (!isIndexed) ? '1' : '0';
+  $('suggest-btn').dataset.locked = (!isIndexed) ? '1' : '0';
+  $('query-mode').disabled = !isIndexed;
+  $('query-strategy').disabled = !isIndexed;
+  $('query-strategy-notes').disabled = !isIndexed;
+  $('question').disabled = !isIndexed;
+
+  if (!hasUploadedFiles && !selectedLocalFiles) {
+    $('index-estimate').textContent = 'Index disabled: upload at least one file to this cache first.';
+  }
+  if (!isIndexed) {
+    $('query-status').textContent = 'Ask Questions disabled until this cache is indexed.';
+  }
+}
+
 function showTraceModal(title, detail){
   $('trace-modal-title').textContent = title || 'Trace detail';
   $('trace-modal-body').textContent = typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2);
@@ -124,6 +161,7 @@ $('chunk-size').oninput = renderTuningLabels;
 $('parallel-workers').oninput = renderTuningLabels;
 
 $('recommend-index-settings').onclick = async ()=>{
+  if ($('recommend-index-settings').dataset.locked === '1') return notifyBlocked('index');
   const cacheId = selectedCacheId(); if(!cacheId) return;
   $('index-recommendation').textContent = 'Calculating recommendation...';
   const r = await fetch(`/api/index-recommendation/${cacheId}`);
@@ -173,6 +211,7 @@ $('save-profile-json').onclick = async ()=>{
 };
 
 $('generate-feature-plans').onclick = async ()=>{
+  if ($('generate-feature-plans').dataset.locked === '1') return notifyBlocked('plans');
   const cacheId = selectedCacheId(); if(!cacheId) return;
   $('feature-plan-status').innerHTML = '<span class="spinner"></span>Generating feature plans (can take up to 1–2 minutes)...';
   const goal = $('feature-goal').value.trim();
@@ -315,9 +354,11 @@ async function fetchCaches(){
   $('cache-select').innerHTML=list.map(c=>`<option value="${c.id}">${c.label}</option>`).join('');
   if (prior && list.some(c=>c.id===prior)) $('cache-select').value = prior;
   const active=list.find(c=>c.id===selectedCacheId()) || list[0];
+  currentCache = active || null;
   $('active-cache-label').textContent = active ? `${active.label} (${active.id})` : 'None';
   $('ready-state').textContent=active?.readyForQuestions ? 'Ready for questions ✅' : 'Not ready for questions';
   renderUploadedFilePreview(active?.files || []);
+  applyGateState();
 
   document.querySelectorAll('.cache-jump').forEach((btn) => {
     btn.onclick = async () => {
@@ -337,12 +378,12 @@ async function fetchCaches(){
   if (active?.id) await loadActiveProfile(active.id); else clearActiveProfileUI();
 }
 
-$('cache-select').onchange = async ()=> { const list=await (await fetch('/api/caches')).json(); const c=(list.caches||[]).find(x=>x.id===selectedCacheId()); $('active-cache-label').textContent = c ? `${c.label} (${c.id})` : 'None'; renderUploadedFilePreview(c?.files || []); await fetchChats(); await checkSurreal(); if (c?.id) await loadActiveProfile(c.id); if ((c?.files||[]).length) await runQuickSummary(c.id); };
+$('cache-select').onchange = async ()=> { const list=await (await fetch('/api/caches')).json(); const c=(list.caches||[]).find(x=>x.id===selectedCacheId()); currentCache = c || null; $('active-cache-label').textContent = c ? `${c.label} (${c.id})` : 'None'; renderUploadedFilePreview(c?.files || []); applyGateState(); await fetchChats(); await checkSurreal(); if (c?.id) await loadActiveProfile(c.id); if ((c?.files||[]).length) await runQuickSummary(c.id); };
 $('chat-select').onchange = async ()=> { activeChatId = $('chat-select').value; await loadChatMessages(); };
 $('new-chat').onclick = async ()=>{ const cacheId = selectedCacheId(); if(!cacheId) return; const j = await createNewChatForCache(cacheId, `Session ${new Date().toLocaleString()}`); activeChatId = j.chatId; await fetchChats(); $('query-status').textContent = 'New chat created.'; };
 
 $('create-cache').onclick=async()=>{ const label=$('cache-label').value.trim(); if(!label) return; await fetch('/api/caches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label})}); $('cache-label').value=''; await fetchCaches(); };
-$('file-input').onchange=()=>{ const files=[...$('file-input').files]; $('file-preview').innerHTML=files.map(f=>{ const e=ext(f.name); const ok=supported.includes(e); return `<tr><td>${f.name}</td><td>${e||'unknown'}</td><td>${bytes(f.size)}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td><td><span class="muted">Preview after upload</span></td></tr>`; }).join(''); };
+$('file-input').onchange=()=>{ const files=[...$('file-input').files]; $('file-preview').innerHTML=files.map(f=>{ const e=ext(f.name); const ok=supported.includes(e); return `<tr><td>${f.name}</td><td>${e||'unknown'}</td><td>${bytes(f.size)}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td><td><span class="muted">Preview after upload</span></td></tr>`; }).join(''); applyGateState(); };
 
 async function uploadSelectedFilesIfAny(){
   const cacheId=selectedCacheId(); const files=[...$('file-input').files]; if(!cacheId || !files.length) return { uploaded: 0, skipped: true };
@@ -363,6 +404,7 @@ $('load-sample').onclick=async()=>{ const cacheId=selectedCacheId(); if(!cacheId
 async function checkSurreal(){ const r=await fetch('/api/surreal/health'); const j=await r.json(); if(r.ok&&j.ok){ $('surreal-dot').className='dot green'; $('surreal-status').textContent='Reachable'; return true; } $('surreal-dot').className='dot red'; $('surreal-status').textContent=`Unreachable: ${j.error||'unknown'}`; return false; }
 
 $('load-existing-index').onclick = async ()=>{
+  if ($('load-existing-index').dataset.locked === '1') return notifyBlocked('index');
   const cacheId=selectedCacheId(); if(!cacheId) return;
   const r=await fetch(`/api/index/${cacheId}`,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ forceReindex: false }) });
   const j=await r.json();
@@ -375,6 +417,7 @@ $('load-existing-index').onclick = async ()=>{
 };
 
 $('index-btn').onclick=async()=>{
+  if ($('index-btn').dataset.locked === '1') return notifyBlocked('index');
   const cacheId=selectedCacheId(); if(!cacheId) return;
   try { const up = await uploadSelectedFilesIfAny(); if (!up.skipped) $('index-log').textContent = `Auto-upload complete (${up.uploaded} file(s)). Starting index...`; } catch (error) { $('index-log').textContent = `Cannot index: upload step failed (${error.message}).`; return; }
   const cacheRes = await fetch('/api/caches'); const cacheJson = await cacheRes.json(); const active = (cacheJson.caches || []).find((c) => c.id === cacheId);
@@ -424,6 +467,7 @@ $('index-btn').onclick=async()=>{
 };
 
 $('suggest-btn').onclick = async ()=>{
+  if ($('suggest-btn').dataset.locked === '1') return notifyBlocked('ask');
   const cacheId=selectedCacheId(); if(!cacheId) return;
   $('query-status').textContent = 'Suggesting questions...';
   const r = await fetch(`/api/suggest-questions/${cacheId}`, {
@@ -442,6 +486,7 @@ $('suggest-btn').onclick = async ()=>{
 };
 
 $('ask-btn').onclick=async()=>{
+  if ($('ask-btn').dataset.locked === '1') return notifyBlocked('ask');
   const cacheId=selectedCacheId(); const q=$('question').value.trim(); if(!cacheId||!q) return;
   const mode=$('query-mode').value; activeChatId = $('chat-select').value || activeChatId;
   const payload = { question:q, mode, chatId: activeChatId, queryStrategy: $('query-strategy').value, queryStrategyNotes: $('query-strategy-notes').value.trim(), openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() };
