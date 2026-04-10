@@ -258,13 +258,33 @@ $('generate-feature-plans').onclick = async ()=>{
   const cacheId = selectedCacheId(); if(!cacheId) return;
   $('feature-plan-status').innerHTML = '<span class="spinner"></span>Generating feature plans (can take up to 1–2 minutes)...';
   const goal = $('feature-goal').value.trim();
+  const reqBody = { goal, ...aiCredPayload() };
+  const reqPreview = {
+    request: {
+      method: 'POST',
+      url: `/api/index/feature-plans/${cacheId}`,
+      headers: { 'Content-Type': 'application/json' },
+      body: reqBody
+    },
+    note: 'Request dispatched. Waiting for server response...'
+  };
+  if ($('feature-ai-preview')) $('feature-ai-preview').textContent = JSON.stringify(reqPreview, null, 2);
+
   const r = await fetch(`/api/index/feature-plans/${cacheId}`, {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ goal, ...aiCredPayload() })
+    body: JSON.stringify(reqBody)
   });
   const j = await r.json();
+
+  if ($('feature-ai-preview')) {
+    $('feature-ai-preview').textContent = JSON.stringify({
+      ...reqPreview,
+      serverPreview: j?.requestPreview || null,
+      responseMeta: { ok: r.ok, status: r.status, source: j?.source || null }
+    }, null, 2);
+  }
+
   if (!r.ok || !j.ok) { $('feature-plan-status').textContent = `Feature planning failed: ${j.error||'unknown'}`; return; }
-  if ($('feature-ai-preview')) $('feature-ai-preview').textContent = JSON.stringify(j.requestPreview || { note: 'No preview available' }, null, 2);
   renderFeaturePlans(j.plans || []);
   if (j.sampleSummary) $('quick-file-summary').textContent = j.sampleSummary;
   if (!j.plans?.length) {
