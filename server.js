@@ -273,7 +273,7 @@ app.post('/api/caches', (req, res) => {
   return res.json({ ok: true, cache });
 });
 
-app.post('/api/upload', upload.array('files', 400), (req, res) => {
+app.post('/api/upload', upload.array('files', 400), async (req, res) => {
   logServer('upload:start', { cacheId: req.body?.cacheId, fileCount: (req.files || []).length });
   const cacheId = String(req.body?.cacheId || '').trim();
   if (!cacheId) return res.status(400).json({ ok: false, error: 'cacheId required' });
@@ -281,17 +281,34 @@ app.post('/api/upload', upload.array('files', 400), (req, res) => {
   const cache = findCache(data, cacheId);
   if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
 
-  const files = (req.files || []).map((f) => ({
-    id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    originalName: f.originalname,
-    storedName: path.basename(f.path),
-    path: path.relative(ROOT, f.path),
-    absPath: f.path,
-    size: f.size,
-    mimeType: f.mimetype,
-    supported: isSupported(f.originalname),
-    uploadedAt: new Date().toISOString()
-  }));
+  const files = [];
+  for (const f of (req.files || [])) {
+    let samplePreview = '';
+    let extractedWords = 0;
+    let extractionMethod = '';
+    try {
+      const extracted = await extractTextFromFile(f.path, f.originalname);
+      const words = String(extracted.text || '').split(/\s+/).filter(Boolean);
+      extractedWords = words.length;
+      extractionMethod = extracted.method || 'unknown';
+      samplePreview = String(extracted.text || '').slice(0, 200);
+    } catch {}
+
+    files.push({
+      id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      originalName: f.originalname,
+      storedName: path.basename(f.path),
+      path: path.relative(ROOT, f.path),
+      absPath: f.path,
+      size: f.size,
+      mimeType: f.mimetype,
+      supported: isSupported(f.originalname),
+      samplePreview,
+      extractedWords,
+      extractionMethod,
+      uploadedAt: new Date().toISOString()
+    });
+  }
   cache.files = [...(cache.files || []), ...files];
   cache.updatedAt = new Date().toISOString();
   cache.status = 'files_uploaded';
@@ -808,6 +825,48 @@ Return:
   }
 });
 
+app.post('/api/cache-quick-summary/:cacheId', async (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const openRouterKey = String(req.body?.openRouterKey || '').trim();
+  const model = String(req.body?.model || '').trim() || 'openai/gpt-4o-mini';
+  const data = readCaches();
+  const cache = findCache(data, cacheId);
+  if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
+
+  const files = (cache.files || []).slice(-6);
+  const snippets = files.map((f) => ({
+    filename: f.originalName,
+    extractedWords: Number(f.extractedWords || 0),
+    extractionMethod: f.extractionMethod || 'unknown',
+    sample: String(f.samplePreview || '').slice(0, 220)
+  }));
+  const readable = snippets.filter((s) => s.extractedWords > 0 && s.sample.trim());
+  if (!readable.length) {
+    return res.json({ ok: true, source: 'no-readable-data', summary: 'No readable text detected yet. This may be a scanned/image PDF or unsupported content.', snippets });
+  }
+
+  const fallback = `Detected ${readable.length}/${snippets.length} readable file(s). Main terms: ${readable.map((r) => r.sample.split(/\s+/).slice(0, 8).join(' ')).join(' | ').slice(0, 220)}...`;
+  if (!openRouterKey) return res.json({ ok: true, source: 'heuristic', summary: fallback, snippets });
+
+  try {
+    const prompt = `Summarize this uploaded dataset in 3 concise bullets for an indexing setup UI. Mention likely topic/domain and what can be analyzed.
+JSON only: {"summary":"..."}
+Data snippets:\n${readable.map((s, i) => `#${i + 1} ${s.filename} (words:${s.extractedWords}, method:${s.extractionMethod})\n${s.sample}`).join('\n\n')}`;
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${openRouterKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.2 })
+    });
+    const j = await r.json();
+    const raw = String(j?.choices?.[0]?.message?.content || '').trim();
+    let parsed = null;
+    try { parsed = JSON.parse(raw.replace(/^```json/i, '').replace(/```$/i, '').trim()); } catch {}
+    return res.json({ ok: true, source: parsed?.summary ? 'ai' : 'heuristic-fallback', summary: parsed?.summary || fallback, snippets });
+  } catch {
+    return res.json({ ok: true, source: 'heuristic-error-fallback', summary: fallback, snippets });
+  }
+});
+
 app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
   const goal = String(req.body?.goal || '').trim() || 'Find patterns, relationships, and anomalies in this dataset';
@@ -819,43 +878,64 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
 
   const files = (cache.files || []).filter((f) => f.absPath && fs.existsSync(f.absPath));
   const fileList = files.slice(0, 8).map((f) => `${f.originalName} (${f.size} bytes)`).join('\n');
-  let sampleText = '';
-  for (const f of files.slice(0, 3)) {
+  const sampledParts = [];
+  for (const f of files.slice(0, 4)) {
     try {
       const extracted = await extractTextFromFile(f.absPath, f.originalName);
-      const words = String(extracted.text || '').split(/\s+/).filter(Boolean).slice(0, 500);
-      if (words.length) { sampleText = words.join(' '); break; }
+      const words = String(extracted.text || '').split(/\s+/).filter(Boolean).slice(0, 200);
+      if (words.length) sampledParts.push(words.join(' '));
     } catch {}
   }
+  const sampleText = sampledParts.join('\n\n').trim();
   const sampleWordCount = sampleText ? sampleText.split(/\s+/).filter(Boolean).length : 0;
 
   const system = computeSystemProfile();
+  if (sampleWordCount < 30) {
+    return res.json({
+      ok: true,
+      source: 'no-readable-data',
+      plans: [],
+      sampleWordCount,
+      warning: 'I cannot read enough text from the uploaded files to generate reliable feature plans. Try OCR for scanned PDFs or upload text-readable files.'
+    });
+  }
+
+  const sampleTokens = sampleText.toLowerCase().match(/[a-z][a-z0-9-]{2,}/g) || [];
+  const stop = new Set(['the','and','for','with','that','this','from','are','was','were','have','has','had','into','over','under','their','about','between','after','before','your','what','when','where','which']);
+  const freq = new Map();
+  for (const t of sampleTokens) {
+    if (stop.has(t)) continue;
+    freq.set(t, (freq.get(t) || 0) + 1);
+  }
+  const topTerms = [...freq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,8).map(([t])=>t);
+  const domainHint = topTerms.slice(0,3).join(', ') || 'dataset terms';
+
   const quick = {
     tier: 'Fast',
     name: 'Quick scan',
-    explanation: 'Fastest pass for initial orientation and rough retrieval.',
+    explanation: `Fastest pass for initial orientation on detected topic (${domainHint}).`,
     indexOptions: { chunkSize: 2400, parallelWorkers: Math.max(1, Math.min(8, system.recommended.parallelWorkers + 1)), analysisEnabled: false, preferGpu: false },
     estimatedTime: 'Low',
-    tableDesign: ['document', 'chunk'],
-    exampleQuestion: `What are the highest-frequency recurring terms related to: ${goal}?`
+    tableDesign: ['document', 'chunk', 'keyword frequencies'],
+    exampleQuestion: `What are the main recurring themes in this ${domainHint} dataset related to: ${goal}?`
   };
   const balanced = {
     tier: 'Balanced',
     name: 'Investigation default',
-    explanation: 'Good tradeoff between indexing time and relationship discovery.',
+    explanation: `Good tradeoff between indexing time and relationship discovery for ${domainHint} context.`,
     indexOptions: { chunkSize: 1800, parallelWorkers: system.recommended.parallelWorkers, analysisEnabled: true, preferGpu: false },
     estimatedTime: 'Medium',
     tableDesign: ['document', 'chunk', 'entity', 'event', 'relation', 'anomaly'],
-    exampleQuestion: `Which entities and events are most correlated with: ${goal}?`
+    exampleQuestion: `Which entities, events, and relationships are most correlated with: ${goal}?`
   };
   const hardcore = {
     tier: 'Hardcore',
     name: 'Deep graph',
-    explanation: 'Most robust structure for route-clustering and relationship mapping.',
+    explanation: `Most robust structure for high-detail clustering and relationship mapping on ${domainHint}.`,
     indexOptions: { chunkSize: 1400, parallelWorkers: Math.max(1, system.recommended.parallelWorkers - 1), analysisEnabled: true, preferGpu: false },
     estimatedTime: 'High',
-    tableDesign: ['document', 'chunk', 'entity', 'event', 'activity', 'intent', 'relation', 'anomaly'],
-    exampleQuestion: `Show the largest clusters and nearest-neighbor movement correlations for: ${goal}.`
+    tableDesign: ['document', 'chunk', 'entity', 'event', 'activity', 'intent', 'relation', 'anomaly', 'cluster labels'],
+    exampleQuestion: `Show strongest clusters, outliers, and nearest-neighbor correlations relevant to: ${goal}.`
   };
   const heuristicPlans = [quick, balanced, hardcore];
 
@@ -875,6 +955,10 @@ Return strict JSON array of 3 objects with keys:
 - estimatedTime (Low|Medium|High)
 - tableDesign (array of table names/features)
 - exampleQuestion
+Critical constraints:
+- Be intent-driven and file-driven from the sample.
+- Do NOT default to banking/accounts/transactions unless those terms appear in sample or goal.
+- If uncertain, state uncertainty and stay generic to detected domain terms.
 Make options meaningfully different and practical.`;
 
     const aiResp = await fetch('https://openrouter.ai/api/v1/chat/completions', {

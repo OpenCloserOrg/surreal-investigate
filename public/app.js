@@ -83,6 +83,10 @@ $('generate-feature-plans').onclick = async ()=>{
   const j = await r.json();
   if (!r.ok || !j.ok) { $('feature-plan-status').textContent = `Feature planning failed: ${j.error||'unknown'}`; return; }
   renderFeaturePlans(j.plans || []);
+  if (!j.plans?.length) {
+    $('feature-plan-status').textContent = j.warning || `No plans generated (${j.source}).`;
+    return;
+  }
   $('feature-plan-status').textContent = `Generated ${j.plans?.length||0} plans (${j.source}). Sampled ${j.sampleWordCount||0} words.`;
 };
 
@@ -105,6 +109,34 @@ function renderFeaturePlans(plans = []) {
   const el = $('feature-plans');
   if (!Array.isArray(plans) || !plans.length) { el.innerHTML = ''; return; }
   el.innerHTML = plans.map((p, idx)=>`<details class="feature-plan" ${idx===0?'open':''}><summary>${(p.tier||'Plan').replace(/</g,'&lt;')} — ${(p.name||'').replace(/</g,'&lt;')}</summary><p class="muted">${String(p.explanation||'').replace(/</g,'&lt;')}</p><p><strong>Index options:</strong> chunk ${p.indexOptions?.chunkSize||1400}, workers ${p.indexOptions?.parallelWorkers||1}, analysis ${p.indexOptions?.analysisEnabled===false?'off':'on'}</p><p><strong>Estimated indexing:</strong> ${p.estimatedTime || 'n/a'}</p><p><strong>Example question:</strong> ${String(p.exampleQuestion||'').replace(/</g,'&lt;')}</p><ul>${(p.tableDesign||[]).map((t)=>`<li>${String(t).replace(/</g,'&lt;')}</li>`).join('')}</ul></details>`).join('');
+}
+
+function renderUploadedFilePreview(files = []) {
+  $('file-preview').innerHTML = (files || []).slice(-12).map((f)=>{
+    const e = ext(f.originalName || f.name || '');
+    const ok = f.supported !== false;
+    const sample = String(f.samplePreview || '').trim();
+    const btn = sample ? `<button class="sugg-btn view-sample" data-sample="${sample.replace(/"/g,'&quot;')}">View</button>` : '<span class="muted">No text</span>';
+    return `<tr><td>${(f.originalName||f.name||'').replace(/</g,'&lt;')}</td><td>${e||'unknown'}</td><td>${bytes(Number(f.size||0))}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td><td>${btn}</td></tr>`;
+  }).join('');
+  document.querySelectorAll('.view-sample').forEach((btn)=>{ btn.onclick=()=>showTraceModal('Sample text preview (first 200 chars)', btn.getAttribute('data-sample') || ''); });
+}
+
+async function runQuickSummary(cacheId){
+  if(!cacheId) return;
+  $('quick-file-summary').textContent = 'Scanning uploaded files and generating summary...';
+  const r = await fetch(`/api/cache-quick-summary/${cacheId}`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() })
+  });
+  const j = await r.json();
+  if (!r.ok || !j.ok) { $('quick-file-summary').textContent = `Summary failed: ${j.error||'unknown'}`; return; }
+  $('quick-file-summary').textContent = j.summary || 'No summary.';
+  if (Array.isArray(j.snippets)) {
+    const activeRows = j.snippets.map((s)=>({ originalName: s.filename, size: 0, supported: true, samplePreview: s.sample }));
+    const existing = [...$('file-preview').querySelectorAll('tr')];
+    if (!existing.length) renderUploadedFilePreview(activeRows);
+  }
 }
 
 async function loadChatMessages(){
@@ -146,6 +178,7 @@ async function fetchCaches(){
   const active=list.find(c=>c.id===selectedCacheId()) || list[0];
   $('active-cache-label').textContent = active ? `${active.label} (${active.id})` : 'None';
   $('ready-state').textContent=active?.readyForQuestions ? 'Ready for questions ✅' : 'Not ready for questions';
+  renderUploadedFilePreview(active?.files || []);
 
   document.querySelectorAll('.cache-jump').forEach((btn) => {
     btn.onclick = async () => {
@@ -164,12 +197,12 @@ async function fetchCaches(){
   await fetchChats();
 }
 
-$('cache-select').onchange = async ()=> { const list=await (await fetch('/api/caches')).json(); const c=(list.caches||[]).find(x=>x.id===selectedCacheId()); $('active-cache-label').textContent = c ? `${c.label} (${c.id})` : 'None'; await fetchChats(); await checkSurreal(); };
+$('cache-select').onchange = async ()=> { const list=await (await fetch('/api/caches')).json(); const c=(list.caches||[]).find(x=>x.id===selectedCacheId()); $('active-cache-label').textContent = c ? `${c.label} (${c.id})` : 'None'; renderUploadedFilePreview(c?.files || []); await fetchChats(); await checkSurreal(); if ((c?.files||[]).length) await runQuickSummary(c.id); };
 $('chat-select').onchange = async ()=> { activeChatId = $('chat-select').value; await loadChatMessages(); };
 $('new-chat').onclick = async ()=>{ const cacheId = selectedCacheId(); if(!cacheId) return; const j = await createNewChatForCache(cacheId, `Session ${new Date().toLocaleString()}`); activeChatId = j.chatId; await fetchChats(); $('query-status').textContent = 'New chat created.'; };
 
 $('create-cache').onclick=async()=>{ const label=$('cache-label').value.trim(); if(!label) return; await fetch('/api/caches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label})}); $('cache-label').value=''; await fetchCaches(); };
-$('file-input').onchange=()=>{ const files=[...$('file-input').files]; $('file-preview').innerHTML=files.map(f=>{ const e=ext(f.name); const ok=supported.includes(e); return `<tr><td>${f.name}</td><td>${e||'unknown'}</td><td>${bytes(f.size)}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td></tr>`; }).join(''); };
+$('file-input').onchange=()=>{ const files=[...$('file-input').files]; $('file-preview').innerHTML=files.map(f=>{ const e=ext(f.name); const ok=supported.includes(e); return `<tr><td>${f.name}</td><td>${e||'unknown'}</td><td>${bytes(f.size)}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td><td><span class="muted">Preview after upload</span></td></tr>`; }).join(''); };
 
 async function uploadSelectedFilesIfAny(){
   const cacheId=selectedCacheId(); const files=[...$('file-input').files]; if(!cacheId || !files.length) return { uploaded: 0, skipped: true };
@@ -177,13 +210,15 @@ async function uploadSelectedFilesIfAny(){
   const fd=new FormData(); fd.append('cacheId',cacheId); files.forEach(f=>fd.append('files',f));
   const r=await fetch('/api/upload',{method:'POST',body:fd}); const j=await r.json();
   if(!r.ok){ $('upload-status').textContent = `Upload failed: ${j.error||'unknown'}`; throw new Error(j.error||'upload failed'); }
-  $('file-input').value=''; $('file-preview').innerHTML='';
+  $('file-input').value='';
+  renderUploadedFilePreview(j.files || []);
   $('upload-status').textContent = `Uploaded ${j.files?.length||0} file(s) to cache.`;
   await fetchCaches();
+  await runQuickSummary(cacheId);
   return { uploaded: j.files?.length || 0, skipped: false };
 }
 $('upload-btn').onclick=async()=>{ try { await uploadSelectedFilesIfAny(); } catch {} };
-$('load-sample').onclick=async()=>{ const cacheId=selectedCacheId(); if(!cacheId) return; $('upload-status').textContent = 'Uploading sample fixture...'; const r=await fetch('/fixtures/sample-case-500w.txt'); const txt=await r.text(); const f=new File([txt],'sample-case-500w.txt',{type:'text/plain'}); const fd=new FormData(); fd.append('cacheId',cacheId); fd.append('files',f); const up=await fetch('/api/upload',{method:'POST',body:fd}); const j=await up.json(); if(!up.ok){ $('upload-status').textContent = `Sample upload failed: ${j.error||'unknown'}`; return; } $('upload-status').textContent = 'Sample uploaded.'; await fetchCaches(); };
+$('load-sample').onclick=async()=>{ const cacheId=selectedCacheId(); if(!cacheId) return; $('upload-status').textContent = 'Uploading sample fixture...'; const r=await fetch('/fixtures/sample-case-500w.txt'); const txt=await r.text(); const f=new File([txt],'sample-case-500w.txt',{type:'text/plain'}); const fd=new FormData(); fd.append('cacheId',cacheId); fd.append('files',f); const up=await fetch('/api/upload',{method:'POST',body:fd}); const j=await up.json(); if(!up.ok){ $('upload-status').textContent = `Sample upload failed: ${j.error||'unknown'}`; return; } $('upload-status').textContent = 'Sample uploaded.'; renderUploadedFilePreview(j.files || []); await fetchCaches(); await runQuickSummary(cacheId); };
 
 async function checkSurreal(){ const r=await fetch('/api/surreal/health'); const j=await r.json(); if(r.ok&&j.ok){ $('surreal-dot').className='dot green'; $('surreal-status').textContent='Reachable'; return true; } $('surreal-dot').className='dot red'; $('surreal-status').textContent=`Unreachable: ${j.error||'unknown'}`; return false; }
 
@@ -340,4 +375,4 @@ $('ask-btn').onclick=async()=>{
   $('question').value='';
 };
 
-(async()=>{ loadOpenRouter(); updateQuestionPlaceholder(); renderTuningLabels(); await fetchCaches(); await checkSurreal(); })();
+(async()=>{ loadOpenRouter(); updateQuestionPlaceholder(); renderTuningLabels(); await fetchCaches(); await checkSurreal(); if (selectedCacheId()) await runQuickSummary(selectedCacheId()); })();
