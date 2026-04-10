@@ -6,6 +6,7 @@ let liveTrace = [];
 let recommendedIndexOptions = null;
 let featurePlansState = [];
 let activeIndexProfile = null;
+let selectedPlanIdx = -1;
 let currentCache = null;
 
 function ext(name=''){ const p=name.split('.'); return p.length>1 ? p.pop().toLowerCase() : ''; }
@@ -58,6 +59,14 @@ function buildSurrealFormatProfile(profile = null){
 function setProfileLock(locked){
   ['index-strategy','index-strategy-notes','chunk-size','parallel-workers','analysis-enabled','prefer-gpu'].forEach((id)=>{ if($(id)) $(id).disabled = locked; });
 }
+function setSelectedPlanUI(idx = -1){
+  selectedPlanIdx = idx;
+  document.querySelectorAll('#feature-plans .feature-plan').forEach((el, i)=>el.classList.toggle('selected', i===idx));
+  const banner = $('feature-plan-selected-banner');
+  if (!banner) return;
+  banner.style.display = idx >= 0 ? 'block' : 'none';
+}
+
 function applyProfile(profile){
   if (!profile) return;
   activeIndexProfile = profile;
@@ -229,7 +238,23 @@ $('view-active-profile-format').onclick = ()=> showTraceModal('Active Profile �
 $('exit-active-profile').onclick = async ()=>{
   const cacheId = selectedCacheId();
   clearActiveProfileUI();
+  setSelectedPlanUI(-1);
   if (cacheId) await fetch(`/api/index-profile/${cacheId}`, { method:'DELETE' });
+  renderFeaturePlans(featurePlansState);
+};
+$('reset-feature-plan').onclick = async ()=>{
+  const cacheId = selectedCacheId();
+  clearActiveProfileUI();
+  setSelectedPlanUI(-1);
+  if (cacheId) await fetch(`/api/index-profile/${cacheId}`, { method:'DELETE' });
+  $('index-strategy').value = 'investigation-default';
+  $('index-strategy-notes').value = '';
+  $('chunk-size').value = '1400';
+  $('parallel-workers').value = '1';
+  $('analysis-enabled').checked = true;
+  $('prefer-gpu').checked = false;
+  renderTuningLabels();
+  renderFeaturePlans(featurePlansState);
 };
 $('edit-active-profile').onclick = ()=>{
   const profile = activeIndexProfile || { name:'Custom profile', strategy:$('index-strategy').value, notes:$('index-strategy-notes').value.trim(), tableDesign:['document','chunk'], indexOptions:currentIndexOptions(), examples:[] };
@@ -313,16 +338,20 @@ function renderSuggestions(list = []) {
 function renderFeaturePlans(plans = []) {
   const el = $('feature-plans');
   featurePlansState = Array.isArray(plans) ? plans : [];
-  if (!featurePlansState.length) { el.innerHTML = ''; return; }
-  el.innerHTML = featurePlansState.map((p, idx)=>`<details class="feature-plan" ${idx===0?'open':''}><summary>${(p.tier||'Plan').replace(/</g,'&lt;')} — ${(p.name||'').replace(/</g,'&lt;')}</summary><p class="muted">${String(p.explanation||'').replace(/</g,'&lt;')}</p><p><strong>Performance setup:</strong> chunk ${p.indexOptions?.chunkSize||1400}, workers ${p.indexOptions?.parallelWorkers||1}, analysis ${p.indexOptions?.analysisEnabled===false?'off':'on'}</p><p><strong>Estimated indexing:</strong> ${p.estimatedTime || 'n/a'}</p><p><strong>Example question:</strong> ${String(p.exampleQuestion||'').replace(/</g,'&lt;')}</p><p><strong>Extraction mapping:</strong> ${(p.extractionMapping||[]).slice(0,3).map((x)=>String(x).replace(/</g,'&lt;')).join(' • ') || 'n/a'}</p><p><strong>Domain lexicon:</strong> ${(p.domainLexiconRules||[]).slice(0,8).map((x)=>String(x).replace(/</g,'&lt;')).join(', ') || 'n/a'}</p><ul>${(p.tableWriteIntents||p.tableDesign||[]).map((t)=>`<li>${String(t).replace(/</g,'&lt;')}</li>`).join('')}</ul><div class="row"><button class="use-plan" data-plan-idx="${idx}">Use This Feature Plan</button><button class="view-plan" data-plan-idx="${idx}">See Surreal Format</button></div></details>`).join('');
+  if (!featurePlansState.length) { el.innerHTML = ''; setSelectedPlanUI(-1); return; }
+  el.innerHTML = featurePlansState.map((p, idx)=>`<details class="feature-plan" ${idx===0?'open':''}><summary>${(p.tier||'Plan').replace(/</g,'&lt;')} — ${(p.name||'').replace(/</g,'&lt;')} ${selectedPlanIdx===idx?'✅':''}</summary><p class="muted">${String(p.explanation||'').replace(/</g,'&lt;')}</p><p><strong>Performance setup:</strong> chunk ${p.indexOptions?.chunkSize||1400}, workers ${p.indexOptions?.parallelWorkers||1}, analysis ${p.indexOptions?.analysisEnabled===false?'off':'on'}</p><p><strong>Estimated indexing:</strong> ${p.estimatedTime || 'n/a'}</p><p><strong>Example question:</strong> ${String(p.exampleQuestion||'').replace(/</g,'&lt;')}</p><p><strong>Extraction mapping:</strong> ${(p.extractionMapping||[]).slice(0,3).map((x)=>String(x).replace(/</g,'&lt;')).join(' • ') || 'n/a'}</p><p><strong>Domain lexicon:</strong> ${(p.domainLexiconRules||[]).slice(0,8).map((x)=>String(x).replace(/</g,'&lt;')).join(', ') || 'n/a'}</p><ul>${(p.tableWriteIntents||p.tableDesign||[]).map((t)=>`<li>${String(t).replace(/</g,'&lt;')}</li>`).join('')}</ul><div class="row"><button class="use-plan" data-plan-idx="${idx}">${selectedPlanIdx===idx?'Selected ✅':'Use This Feature Plan'}</button><button class="view-plan" data-plan-idx="${idx}">See Surreal Format</button></div></details>`).join('');
+  setSelectedPlanUI(selectedPlanIdx);
   el.querySelectorAll('.view-plan').forEach((btn)=>btn.onclick=()=>{ const p=featurePlansState[Number(btn.getAttribute('data-plan-idx'))]; showTraceModal('Surreal Format Preview', buildSurrealFormatProfile(p)); });
   el.querySelectorAll('.use-plan').forEach((btn)=>btn.onclick=async()=>{
-    const p=featurePlansState[Number(btn.getAttribute('data-plan-idx'))];
+    const idx = Number(btn.getAttribute('data-plan-idx'));
+    const p=featurePlansState[idx];
     if(!p) return;
     const profile = { id:`plan-${Date.now()}`, name:p.name||p.tier||'Feature Plan', strategy:p.strategy||'custom', notes:p.explanation||'', tableDesign:p.tableDesign||[], extractionMapping:p.extractionMapping||[], domainLexiconRules:p.domainLexiconRules||[], tableWriteIntents:p.tableWriteIntents||[], indexOptions:p.indexOptions||currentIndexOptions(), examples:[{table:'entity',data:{type:'example',value:'...'}},{table:'relation',data:{type:'cooccurrence',sourceValue:'A',targetValue:'B'}}] };
     applyProfile(profile);
+    setSelectedPlanUI(idx);
     const cacheId = selectedCacheId();
     if (cacheId) await fetch(`/api/index-profile/${cacheId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ profile, persist:false }) });
+    renderFeaturePlans(featurePlansState);
   });
 }
 

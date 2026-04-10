@@ -25,6 +25,7 @@ button[data-locked="1"]{opacity:.65;cursor:not-allowed}
 .modal.hidden{display:none}
 .modal-card{width:min(920px,95vw);max-height:85vh;overflow:auto;background:#121820;border:1px solid #2a3140;border-radius:12px;padding:12px}
 .feature-plan{background:#0f161f;border:1px solid #2b3a4b;border-radius:10px;padding:10px;margin:8px 0}
+.feature-plan.selected{border-color:#12b76a;box-shadow:0 0 0 1px #12b76a66 inset}
 .feature-plan summary{cursor:pointer;font-weight:600}
 .feature-plan .muted{margin:6px 0}
 .feature-plan ul{margin:8px 0 0 18px}
