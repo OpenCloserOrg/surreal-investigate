@@ -32,3 +32,5 @@ button[data-locked="1"]{opacity:.65;cursor:not-allowed}
 .spinner{display:inline-block;width:12px;height:12px;border:2px solid #3a4456;border-top-color:#12b76a;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .warn{background:#2b2412;border:1px solid #6e5a2a;color:#f6de9a;padding:8px 10px;border-radius:8px;font-size:12px;margin:8px 0}
+.cred-mode-card{display:block;background:#10161f;border:1px solid #2a3140;border-radius:10px;padding:10px;margin:10px 0}
+.cred-mode-card.active{border-color:#2f80ed;box-shadow:0 0 0 1px #2f80ed55 inset}

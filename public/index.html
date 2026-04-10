@@ -30,19 +30,26 @@
 
     <section class="card">
       <h2>API Credentials (OpenRouter)</h2>
-      <p class="guide"><i class="fa-regular fa-lightbulb"></i> <strong>Guidance:</strong> This app currently uses OpenRouter so you can access many models from one API endpoint and quickly compare performance. Paste your OpenRouter API key, then use an OpenRouter model identifier (example: <code>qwen/qwen3-32b</code> or <code>google/gemini-2.0-flash-001</code>).</p>
-      <div class="row">
-        <label><input type="radio" name="cred-mode" id="cred-local" checked /> Input locally <span class="muted">(less secure; testing only)</span></label>
-        <label><input type="radio" name="cred-mode" id="cred-env" /> Load from .env <span class="muted">(recommended)</span></label>
-      </div>
-      <div class="row">
-        <input id="or-provider-url" placeholder="Provider URL (OpenAI-compatible chat/completions endpoint)" />
-        <input id="or-key" placeholder="OpenRouter API key (sk-or-v1-...)" type="password" />
-        <input id="or-model" placeholder="OpenRouter model id (e.g. qwen/qwen3-32b)" />
-        <button id="save-or">Save</button>
-        <button id="load-env-creds">Load from .env</button>
-        <button id="ping-or">Retest</button>
-      </div>
+      <p class="guide"><i class="fa-regular fa-lightbulb"></i> <strong>Guidance:</strong> OpenRouter is the default provider here so you only need API key + model id. Choose either local input (quick testing) or .env loading (recommended).</p>
+
+      <label class="cred-mode-card" id="cred-local-card">
+        <div><input type="radio" name="cred-mode" id="cred-local" checked /> <strong>Input locally</strong> <span class="muted">(less secure; testing only)</span></div>
+        <div class="row" style="margin-top:8px">
+          <input id="or-key" placeholder="OpenRouter API key (sk-or-v1-...)" type="password" />
+          <input id="or-model" placeholder="OpenRouter model id (e.g. qwen/qwen3-32b)" />
+          <button id="save-or">Save</button>
+          <button id="ping-or">Retest</button>
+        </div>
+      </label>
+
+      <label class="cred-mode-card" id="cred-env-card">
+        <div><input type="radio" name="cred-mode" id="cred-env" /> <strong>Load from .env</strong> <span class="muted">(recommended)</span></div>
+        <div class="row" style="margin-top:8px">
+          <button id="load-env-creds">Load from .env</button>
+          <button id="ping-or-env">Retest env</button>
+        </div>
+      </label>
+
       <p class="muted">Coming soon: additional providers (OpenAI, Anthropic, Together, local model adapters).</p>
       <p>Status: <span id="or-dot" class="dot red"></span> <span id="or-status">Not checked</span></p>
     </section>

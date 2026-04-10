@@ -14,7 +14,7 @@ function duration(sec=0){ const s=Math.max(0, Math.round(Number(sec)||0)); if(s<
 function currentIndexOptions(){ return { chunkSize: Number($('chunk-size').value || 1400), parallelWorkers: Number($('parallel-workers').value || 1), analysisEnabled: $('analysis-enabled').checked, preferGpu: $('prefer-gpu').checked }; }
 function renderTuningLabels(){ $('chunk-size-value').textContent = $('chunk-size').value; $('workers-value').textContent = $('parallel-workers').value; }
 function selectedCacheId(){ return $('cache-select').value; }
-function aiCredPayload(){ return isEnvMode() ? { useEnv: true } : { openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim(), providerUrl: $('or-provider-url').value.trim() }; }
+function aiCredPayload(){ return isEnvMode() ? { useEnv: true } : { openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() }; }
 function buildSurrealFormatProfile(profile = null){
   const p = profile || {
     name: $('index-strategy').value,
@@ -182,7 +182,6 @@ function loadOpenRouter(){
   const mode = localStorage.getItem('creds.mode') || 'local';
   $('cred-local').checked = mode !== 'env';
   $('cred-env').checked = mode === 'env';
-  $('or-provider-url').value = localStorage.getItem('openrouter.providerUrl')||'';
   $('or-key').value=localStorage.getItem('openrouter.key')||'';
   $('or-model').value=localStorage.getItem('openrouter.model')||'openai/gpt-4o-mini';
 }
@@ -190,8 +189,9 @@ function updateQuestionPlaceholder(){ $('question').placeholder = $('query-mode'
 function updateCredModeUI(){
   const env = isEnvMode();
   $('or-key').disabled = env;
-  $('or-provider-url').disabled = env;
-  if (env) $('or-status').textContent = '.env mode active. Click "Load from .env" then Retest.';
+  $('cred-local-card').classList.toggle('active', !env);
+  $('cred-env-card').classList.toggle('active', env);
+  if (env) $('or-status').textContent = '.env mode active. Click "Load from .env" then Retest env.';
 }
 $('query-mode').onchange = updateQuestionPlaceholder;
 $('chunk-size').oninput = renderTuningLabels;
@@ -365,7 +365,6 @@ async function loadChatMessages(){
 
 $('save-or').onclick=()=>{
   localStorage.setItem('creds.mode', isEnvMode() ? 'env' : 'local');
-  localStorage.setItem('openrouter.providerUrl',$('or-provider-url').value.trim());
   localStorage.setItem('openrouter.key',$('or-key').value.trim());
   localStorage.setItem('openrouter.model',$('or-model').value.trim());
   $('or-dot').className='dot green';
@@ -374,8 +373,9 @@ $('save-or').onclick=()=>{
 $('trace-modal-close').onclick = hideTraceModal;
 $('trace-modal').onclick = (e)=>{ if(e.target.id==='trace-modal') hideTraceModal(); };
 $('confirm-modal').onclick = (e)=>{ if(e.target.id==='confirm-modal') $('confirm-modal').classList.add('hidden'); };
-$('ping-or').onclick=async()=>{ $('or-status').textContent='Pinging...'; const r=await fetch('/api/openrouter/ping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({useEnv:isEnvMode(),key:$('or-key').value.trim(),model:$('or-model').value.trim(),providerUrl:$('or-provider-url').value.trim()})}); const j=await r.json(); if(r.ok&&j.ok){ $('or-dot').className='dot green'; $('or-status').textContent='Provider reachable'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`Ping failed: ${j.error||'unknown'}`; }};
-$('load-env-creds').onclick=async()=>{ $('or-status').textContent='Loading .env credentials...'; const r=await fetch('/api/credentials/env-load'); const j=await r.json(); if(j?.providerUrl) $('or-provider-url').value=j.providerUrl; if(j?.model) $('or-model').value=j.model; $('cred-env').checked=true; $('cred-local').checked=false; localStorage.setItem('creds.mode','env'); if(j.ok && j.active){ $('or-dot').className='dot green'; $('or-status').textContent='Loaded from .env and ping passed'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`.env load: ${j.message||'not active'}`; } };
+$('ping-or').onclick=async()=>{ $('or-status').textContent='Pinging local credentials...'; const r=await fetch('/api/openrouter/ping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({useEnv:false,key:$('or-key').value.trim(),model:$('or-model').value.trim()})}); const j=await r.json(); if(r.ok&&j.ok){ $('or-dot').className='dot green'; $('or-status').textContent='Local credentials reachable'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`Ping failed: ${j.error||'unknown'}`; }};
+$('ping-or-env').onclick=async()=>{ $('or-status').textContent='Testing env credentials...'; const r=await fetch('/api/openrouter/ping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({useEnv:true})}); const j=await r.json(); if(r.ok&&j.ok){ $('or-dot').className='dot green'; $('or-status').textContent='Env credentials reachable'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`Env test failed: ${j.error||'unknown'}`; }};
+$('load-env-creds').onclick=async()=>{ $('or-status').textContent='Loading .env credentials...'; const r=await fetch('/api/credentials/env-load'); const j=await r.json(); if(j?.model) $('or-model').value=j.model; $('cred-env').checked=true; $('cred-local').checked=false; localStorage.setItem('creds.mode','env'); updateCredModeUI(); if(j.ok && j.active){ $('or-dot').className='dot green'; $('or-status').textContent='Loaded from .env and ping passed'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`.env load: ${j.message||'not active'}`; } };
 $('example-pricing').onclick = ()=>showTraceModal('Financial Market Feature Plan (Case Study)', {
   dataset: 'OHLCV time series in CSV/Excel (timestamp, symbol, open, high, low, close, volume). Optional indicators: RSI, ATR, CORR, rolling beta.',
   extractionMapping: ['symbol -> entity(asset)', 'OHLC row -> event(price_bar)', 'indicator columns -> activity(signal)', 'cross-symbol lag/correlation -> relation(edge)'],
