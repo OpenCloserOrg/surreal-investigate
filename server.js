@@ -295,6 +295,62 @@ app.delete('/api/index-profile/:cacheId', (req, res) => {
   writeCaches(data);
   return res.json({ ok: true });
 });
+app.get('/api/schema/:cacheId', async (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  try {
+    const schema = await withSurreal(async (db) => {
+      const tables = ['document','chunk','entity','event','activity','intent','relation','anomaly'];
+      const out = {};
+      for (const t of tables) {
+        const q = await db.query(`SELECT * FROM ${t} WHERE cacheId = $cacheId LIMIT 1;`, { cacheId });
+        const rows = Array.isArray(q?.[0]) ? q[0] : (q?.[0]?.result || []);
+        out[t] = rows[0] ? Object.keys(rows[0]) : [];
+      }
+      return out;
+    });
+    return res.json({ ok: true, cacheId, schema });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message || 'schema failed' });
+  }
+});
+
+app.post('/api/convert-surrealql/:cacheId', async (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const statement = String(req.body?.statement || '').trim();
+  const apiKey = String(req.body?.openRouterKey || '').trim() || AI_API_KEY;
+  const model = String(req.body?.model || '').trim() || AI_MODEL;
+  if (!statement) return res.status(400).json({ ok: false, error: 'statement required' });
+
+  const schemaResp = await withSurreal(async (db) => {
+    const tables = ['document','chunk','entity','event','activity','intent','relation','anomaly'];
+    const out = {};
+    for (const t of tables) {
+      const q = await db.query(`SELECT * FROM ${t} WHERE cacheId = $cacheId LIMIT 1;`, { cacheId });
+      const rows = Array.isArray(q?.[0]) ? q[0] : (q?.[0]?.result || []);
+      out[t] = rows[0] ? Object.keys(rows[0]) : [];
+    }
+    return out;
+  });
+
+  if (!apiKey) {
+    const fallback = `-- manual SurrealQL template\nSELECT * FROM chunk WHERE cacheId = '${cacheId}' AND text CONTAINS '${statement.replace(/'/g, "\\'")}' LIMIT 50;`;
+    return res.json({ ok: true, source: 'heuristic', surrealql: fallback, needsRemodel: false, schema: schemaResp });
+  }
+
+  const prompt = `Convert the user statement into SurrealQL for cacheId ${cacheId} using this schema: ${JSON.stringify(schemaResp)}.\nStatement: ${statement}\nReturn JSON only: { surrealql, needsRemodel, remodelInstructions }. If current schema cannot answer precisely, set needsRemodel=true and provide concise remodelInstructions with custom indexing strategy notes.`;
+  try {
+    const payload = { model, messages: [{ role: 'user', content: prompt }], temperature: 0.1 };
+    const r = await fetch(AI_PROVIDER_URL, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const j = await r.json();
+    const raw = String(j?.choices?.[0]?.message?.content || '').trim();
+    let parsed = null;
+    try { parsed = JSON.parse(raw.replace(/^```json/i,'').replace(/```$/i,'').trim()); } catch {}
+    return res.json({ ok: true, source: parsed ? 'ai' : 'ai-raw', schema: schemaResp, ...(parsed || { surrealql: raw }) });
+  } catch (error) {
+    return res.json({ ok: true, source: 'error-fallback', schema: schemaResp, surrealql: `SELECT * FROM chunk WHERE cacheId = '${cacheId}' LIMIT 50;`, needsRemodel: true, remodelInstructions: `AI conversion failed: ${error.message}` });
+  }
+});
+
 app.get('/api/index-data-export/:cacheId', async (req, res) => {
   const cacheId = String(req.params.cacheId || '').trim();
   try {

@@ -148,6 +148,8 @@ function applyGateState(){
 
   $('ask-btn').dataset.locked = (!hasCacheSelected || !isIndexed) ? '1' : '0';
   $('suggest-btn').dataset.locked = (!hasCacheSelected || !isIndexed) ? '1' : '0';
+  $('convert-surrealql').disabled = !hasCacheSelected;
+  $('view-schema').disabled = !hasCacheSelected;
   $('download-manifest').disabled = !hasCacheSelected;
   $('download-index-data').disabled = !hasCacheSelected;
   $('query-mode').disabled = !hasCacheSelected || !isIndexed;
@@ -506,6 +508,32 @@ $('index-fix-help').onclick = async ()=>{
   $('index-fix-help').onclick = async ()=>{
     $('index-log').textContent += '\n\nTip: re-run indexing after applying recommended feature-plan suppressions and intent.';
   };
+};
+
+$('view-schema').onclick = async ()=>{
+  const cacheId = selectedCacheId(); if(!cacheId) return notifyBlocked('ask');
+  const r = await fetch(`/api/schema/${cacheId}`);
+  const j = await r.json();
+  if (!r.ok || !j.ok) { $('query-status').textContent = `Schema load failed: ${j.error||'unknown'}`; return; }
+  showTraceModal('Surreal schema (table fields)', j.schema);
+};
+$('convert-surrealql').onclick = async ()=>{
+  const cacheId = selectedCacheId(); if(!cacheId) return notifyBlocked('ask');
+  const statement = $('question').value.trim();
+  if (!statement) { $('query-status').textContent = 'Enter a statement/question first.'; return; }
+  $('query-status').textContent = 'Converting to SurrealQL...';
+  const r = await fetch(`/api/convert-surrealql/${cacheId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ statement, ...aiCredPayload() }) });
+  const j = await r.json();
+  if (!r.ok || !j.ok) { $('query-status').textContent = `Convert failed: ${j.error||'unknown'}`; return; }
+  showTraceModal('Converted SurrealQL', j);
+  if (j.needsRemodel && j.remodelInstructions) {
+    $('index-strategy').value = 'custom';
+    $('index-strategy-notes').value = String(j.remodelInstructions).slice(0, 1000);
+    $('query-status').textContent = 'Schema remodel recommended. Custom index notes were prefilled.';
+    scrollToSection('section-index');
+  } else {
+    $('query-status').textContent = 'SurrealQL conversion ready.';
+  }
 };
 
 $('query-strategy-help').onclick = ()=>showTraceModal('Query Strategy Modes', {

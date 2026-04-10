@@ -13,7 +13,7 @@ Current AI provider path: **OpenRouter** (single endpoint, multi-model routing f
 When fully running, you can:
 1. Create a cache (dataset workspace)
 2. Upload files (or load sample fixture)
-3. Generate feature plans (domain extraction mapping + lexicon + table intents)
+3. Generate data model + indexing strategy plans (domain extraction mapping + lexicon + table intents)
 4. Index into SurrealDB
 5. Ask in either:
    - **Surreal only** (no LLM cost)
@@ -34,8 +34,10 @@ When fully running, you can:
   - Surreal search mode (term-driven retrieval)
   - Surreal retrieval + OpenRouter synthesis
 - Query strategy controls (preset + custom notes)
+- Convert natural-language questions to SurrealQL against current cache schema
+- View current cache schema (table fields) in-app
 - Index strategy controls (preset + custom notes)
-- Feature plan generation (fast/balanced/hardcore) with extraction mapping + lexicon + table write intents
+- Data model + indexing strategy plan generation (main-topic/comprehensive/all-inclusive) with extraction mapping + lexicon + table write intents
 - AI request preview for feature-plan generation (prompt + sampled chunks + payload)
 - Chat persistence per cache in `chat-logs/<cache-id>/<chat-id>.json`
 - Continue conversations with context from prior turns in each chat

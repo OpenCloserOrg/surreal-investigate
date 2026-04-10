@@ -14,17 +14,17 @@
 
     <section class="card" id="section-workflow">
       <h2>Workflow + File Handling</h2>
-      <p class="guide"><i class="fa-regular fa-lightbulb"></i> <strong>Guidance:</strong> Follow this sequence: Upload → Generate Feature Plans → Index → Ask Questions. Files are copied to <code>uploads/&lt;cacheId&gt;/</code>, index artifacts are written under <code>indexes/&lt;cacheId&gt;/</code>, and the index manifest is <code>indexes/&lt;cacheId&gt;/manifest.json</code>.</p>
+      <p class="guide"><i class="fa-regular fa-lightbulb"></i> <strong>Guidance:</strong> Follow this sequence: Upload → Generate Data Model + Indexing Strategy Plans → Index → Ask Questions. Files are copied to <code>uploads/&lt;cacheId&gt;/</code>, index artifacts are written under <code>indexes/&lt;cacheId&gt;/</code>, and the index manifest is <code>indexes/&lt;cacheId&gt;/manifest.json</code>.</p>
       <ol class="muted">
         <li><strong>Credentials:</strong> add OpenRouter key + model id (optional for AI-assisted planning/summaries).</li>
         <li><strong>Upload:</strong> attach files to cache (selection alone does nothing).</li>
-        <li><strong>Feature Plans:</strong> generate extraction mapping + lexicon + table intents.</li>
+        <li><strong>Data model + indexing strategy plans:</strong> generate extraction mapping + lexicon + table intents.</li>
         <li><strong>Index:</strong> writes structured rows to SurrealDB tables.</li>
         <li><strong>Ask:</strong> run retrieval + reasoning on indexed data.</li>
       </ol>
       <div class="row">
-        <button id="example-pricing">See Financial Market Feature Plan</button>
-        <button id="example-shipping">See Ship Movement Example Feature Plan</button>
+        <button id="example-pricing">See Financial Market Model+Strategy Example</button>
+        <button id="example-shipping">See Ship Movement Model+Strategy Example</button>
       </div>
     </section>
 
@@ -82,7 +82,7 @@
 
     <section class="card" id="section-index">
       <h2>Index</h2>
-      <p class="guide"><i class="fa-regular fa-lightbulb"></i> <strong>Guidance:</strong> Index setup controls how fast ingestion runs and how much structure gets extracted into SurrealDB tables. Use feature plans to define domain logic, then tune chunk/workers here for performance.</p>
+      <p class="guide"><i class="fa-regular fa-lightbulb"></i> <strong>Guidance:</strong> Index setup controls how fast ingestion runs and how much structure gets extracted into SurrealDB tables. Use data model + indexing strategy plans to define domain logic, then tune chunk/workers here for performance.</p>
       <div class="row">
         <select id="index-strategy">
           <option value="investigation-default">Investigation default (entities + events + anomalies)</option>
@@ -135,18 +135,18 @@
       <p class="guide"><i class="fa-regular fa-lightbulb"></i> <strong>Guidance:</strong> Feature plans define domain extraction logic (mapping, lexicon rules, and table write intents). Generating plans may take up to 1–2 minutes depending on model speed.</p>
       <div class="row">
         <input id="feature-goal" placeholder="Describe what you want to know (or leave blank for AI to try)" style="min-width:320px;flex:1" />
-        <button id="generate-feature-plans">Generate 3 Feature Plans</button>
+        <button id="generate-feature-plans">Generate 3 Data Model + Indexing Strategy Plans</button>
       </div>
-      <p class="muted" id="feature-plan-status">No feature plans generated yet.</p>
-      <div class="warn" id="feature-plan-selected-banner" style="display:none">✅ Selected feature plan is active for indexing. <button id="reset-feature-plan" class="sugg-btn" style="margin-left:8px">Reset selection</button></div>
+      <p class="muted" id="feature-plan-status">No model+strategy plans generated yet.</p>
+      <div class="warn" id="feature-plan-selected-banner" style="display:none">✅ Selected model+strategy plan is active for indexing. <button id="reset-feature-plan" class="sugg-btn" style="margin-left:8px">Reset selection</button></div>
       <div id="feature-plans"></div>
       <details class="feature-plan">
-        <summary>AI Request Preview (for Generate Feature Plans)</summary>
+        <summary>AI Request Preview (for Generate Model+Strategy Plans)</summary>
         <pre id="feature-ai-preview" class="log">No request preview yet.</pre>
       </details>
       <div class="card" id="active-profile-card" style="margin-top:10px">
-        <h3>Active Feature Plan</h3>
-        <p class="muted" id="active-profile-status">No active feature plan selected.</p>
+        <h3>Active Data Model + Indexing Strategy Plan</h3>
+        <p class="muted" id="active-profile-status">No active model+strategy plan selected.</p>
         <div class="row">
           <button id="exit-active-profile">Exit Plan</button>
           <button id="view-active-profile-format">View Format</button>
@@ -200,6 +200,8 @@
         <input id="question" placeholder="Search term (Surreal mode) or question (Surreal+AI)" />
         <button id="ask-btn">Run</button>
         <button id="suggest-btn">Suggest Questions</button>
+        <button id="convert-surrealql">Convert to SurrealQL</button>
+        <button id="view-schema">View Schema</button>
       </div>
       <div id="suggestions" class="suggestions"></div>
       <p class="warn" id="ask-warning">⚠ Ask section unlocks after cache indexing completes.</p>
