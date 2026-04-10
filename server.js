@@ -110,6 +110,9 @@ function normalizeIndexProfile(input = {}) {
   const name = String(input.name || strategy).trim().slice(0, 120);
   const notes = String(input.notes || '').trim().slice(0, 1200);
   const tableDesign = Array.isArray(input.tableDesign) ? input.tableDesign.map((x) => String(x).trim()).filter(Boolean).slice(0, 20) : [];
+  const extractionMapping = Array.isArray(input.extractionMapping) ? input.extractionMapping.map((x) => String(x).trim()).filter(Boolean).slice(0, 20) : [];
+  const domainLexiconRules = Array.isArray(input.domainLexiconRules) ? input.domainLexiconRules.map((x) => String(x).trim()).filter(Boolean).slice(0, 40) : [];
+  const tableWriteIntents = Array.isArray(input.tableWriteIntents) ? input.tableWriteIntents.map((x) => String(x).trim()).filter(Boolean).slice(0, 20) : [];
   const examples = Array.isArray(input.examples) ? input.examples.slice(0, 2) : [];
   return {
     id: String(input.id || `profile-${Date.now()}`).trim(),
@@ -117,6 +120,9 @@ function normalizeIndexProfile(input = {}) {
     strategy,
     notes,
     tableDesign,
+    extractionMapping,
+    domainLexiconRules,
+    tableWriteIntents,
     indexOptions: normalizeIndexOptions(input.indexOptions || {}),
     examples,
     createdAt: input.createdAt || new Date().toISOString()
@@ -957,12 +963,14 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
   for (const f of files.slice(0, 4)) {
     try {
       const extracted = await extractTextFromFile(f.absPath, f.originalName);
-      const words = String(extracted.text || '').split(/\s+/).filter(Boolean).slice(0, 200);
+      const words = String(extracted.text || '').split(/\s+/).filter(Boolean).slice(0, 120);
       if (words.length) sampledParts.push(words.join(' '));
     } catch {}
   }
-  const sampleText = sampledParts.join('\n\n').trim();
-  const sampleWordCount = sampleText ? sampleText.split(/\s+/).filter(Boolean).length : 0;
+  const mergedWords = sampledParts.join(' ').split(/\s+/).filter(Boolean).slice(0, 200);
+  const sampleText = mergedWords.join(' ').trim();
+  const sampleWordCount = mergedWords.length;
+  const sampleSummary = sampleWordCount ? `Sample summary: ${mergedWords.slice(0, 45).join(' ')}...` : '';
 
   const system = computeSystemProfile();
   if (sampleWordCount < 30) {
@@ -993,6 +1001,9 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     indexOptions: { chunkSize: 2400, parallelWorkers: Math.max(1, Math.min(8, system.recommended.parallelWorkers + 1)), analysisEnabled: false, preferGpu: false },
     estimatedTime: 'Low',
     tableDesign: ['document', 'chunk', 'keyword frequencies'],
+    extractionMapping: ['raw text -> chunk.text', 'high-frequency terms -> keyword summary'],
+    domainLexiconRules: topTerms,
+    tableWriteIntents: ['document: metadata', 'chunk: retrieval text'],
     exampleQuestion: `What are the main recurring themes in this ${domainHint} dataset related to: ${goal}?`
   };
   const balanced = {
@@ -1003,6 +1014,9 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     indexOptions: { chunkSize: 1800, parallelWorkers: system.recommended.parallelWorkers, analysisEnabled: true, preferGpu: false },
     estimatedTime: 'Medium',
     tableDesign: ['document', 'chunk', 'entity', 'event', 'relation', 'anomaly'],
+    extractionMapping: ['domain nouns -> entity.value', 'time/quantity signals -> event', 'co-occurrence -> relation', 'risk flags -> anomaly'],
+    domainLexiconRules: topTerms,
+    tableWriteIntents: ['entity: named/domain concepts', 'event: measurable changes', 'relation: pair links', 'anomaly: unusual spikes'],
     exampleQuestion: `Which entities, events, and relationships are most correlated with: ${goal}?`
   };
   const hardcore = {
@@ -1013,25 +1027,33 @@ app.post('/api/index/feature-plans/:cacheId', async (req, res) => {
     indexOptions: { chunkSize: 1400, parallelWorkers: Math.max(1, system.recommended.parallelWorkers - 1), analysisEnabled: true, preferGpu: false },
     estimatedTime: 'High',
     tableDesign: ['document', 'chunk', 'entity', 'event', 'activity', 'intent', 'relation', 'anomaly', 'cluster labels'],
+    extractionMapping: ['actor/action phrases -> activity', 'intent language -> intent', 'entity graph density -> cluster labels'],
+    domainLexiconRules: topTerms,
+    tableWriteIntents: ['activity: who-did-what', 'intent: objective clues', 'relation: graph edges', 'cluster labels: communities'],
     exampleQuestion: `Show strongest clusters, outliers, and nearest-neighbor correlations relevant to: ${goal}.`
   };
   const heuristicPlans = [quick, balanced, hardcore];
 
-  if (!openRouterKey) return res.json({ ok: true, source: 'heuristic', plans: heuristicPlans, sampleWordCount });
+  if (!openRouterKey) return res.json({ ok: true, source: 'heuristic', plans: heuristicPlans, sampleWordCount, sampleSummary });
 
   try {
     const prompt = `You are designing indexing feature plans for a SurrealDB investigative app.
 Create exactly 3 options: Fast, Balanced, Hardcore.
 User goal: ${goal}
 Files:\n${fileList || 'none'}
-Data sample (max 500 words):\n${sampleText || 'no sample extracted'}
+Data sample (max 200 words):\n${sampleText || 'no sample extracted'}
+Sample summary:\n${sampleSummary || 'none'}
 Return strict JSON array of 3 objects with keys:
 - tier (Fast|Balanced|Hardcore)
 - name
+- strategy (investigation-default|entities-first|timeline-first|money-flow|custom)
 - explanation
 - indexOptions { chunkSize (300-8000), parallelWorkers (1-24), analysisEnabled (bool), preferGpu (bool) }
 - estimatedTime (Low|Medium|High)
 - tableDesign (array of table names/features)
+- extractionMapping (array of field mapping rules)
+- domainLexiconRules (array of domain terms/rules)
+- tableWriteIntents (array describing what is written to each table)
 - exampleQuestion
 Critical constraints:
 - Be intent-driven and file-driven from the sample.
@@ -1057,13 +1079,16 @@ Make options meaningfully different and practical.`;
         indexOptions: normalizeIndexOptions(p.indexOptions || {}),
         estimatedTime: String(p.estimatedTime || 'Medium'),
         tableDesign: Array.isArray(p.tableDesign) ? p.tableDesign.map((x) => String(x)).slice(0, 12) : [],
+        extractionMapping: Array.isArray(p.extractionMapping) ? p.extractionMapping.map((x) => String(x)).slice(0, 12) : [],
+        domainLexiconRules: Array.isArray(p.domainLexiconRules) ? p.domainLexiconRules.map((x) => String(x)).slice(0, 20) : [],
+        tableWriteIntents: Array.isArray(p.tableWriteIntents) ? p.tableWriteIntents.map((x) => String(x)).slice(0, 12) : [],
         exampleQuestion: String(p.exampleQuestion || '')
       }));
-      return res.json({ ok: true, source: 'ai', plans: cleaned, sampleWordCount });
+      return res.json({ ok: true, source: 'ai', plans: cleaned, sampleWordCount, sampleSummary });
     }
-    return res.json({ ok: true, source: 'heuristic-fallback', plans: heuristicPlans, sampleWordCount });
+    return res.json({ ok: true, source: 'heuristic-fallback', plans: heuristicPlans, sampleWordCount, sampleSummary });
   } catch {
-    return res.json({ ok: true, source: 'heuristic-error-fallback', plans: heuristicPlans, sampleWordCount });
+    return res.json({ ok: true, source: 'heuristic-error-fallback', plans: heuristicPlans, sampleWordCount, sampleSummary });
   }
 });
 

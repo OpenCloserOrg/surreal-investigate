@@ -27,3 +27,6 @@ input[type="range"]{width:100%}
 .feature-plan summary{cursor:pointer;font-weight:600}
 .feature-plan .muted{margin:6px 0}
 .feature-plan ul{margin:8px 0 0 18px}
+.guide{background:#111d2b;border:1px solid #28415f;color:#cfe5ff;padding:8px 10px;border-radius:8px;font-size:12px;margin:8px 0}
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid #3a4456;border-top-color:#12b76a;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}

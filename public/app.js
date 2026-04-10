@@ -19,25 +19,37 @@ function buildSurrealFormatProfile(profile = null){
     strategy: $('index-strategy').value,
     notes: $('index-strategy-notes').value.trim(),
     indexOptions: currentIndexOptions(),
-    tableDesign: ['document','chunk','entity','event','activity','intent','relation','anomaly']
+    tableDesign: ['document','chunk','entity','event','activity','intent','relation','anomaly'],
+    extractionMapping: [],
+    domainLexiconRules: [],
+    tableWriteIntents: []
   };
   const opts = p.indexOptions || currentIndexOptions();
   const writes = ['document','chunk'];
   if (opts.analysisEnabled !== false) writes.push('entity','event','activity','intent','relation','anomaly');
   return {
-    profileName: p.name || p.strategy || 'profile',
+    planName: p.name || p.strategy || 'feature-plan',
     strategy: p.strategy || $('index-strategy').value,
     notes: p.notes || $('index-strategy-notes').value.trim(),
     indexOptions: opts,
     requestPayload: {
       indexStrategy: p.strategy || $('index-strategy').value,
       indexStrategyNotes: p.notes || $('index-strategy-notes').value.trim(),
-      indexOptions: opts
+      indexOptions: opts,
+      featurePlanSpec: {
+        extractionMapping: p.extractionMapping || [],
+        domainLexiconRules: p.domainLexiconRules || [],
+        tableWriteIntents: p.tableWriteIntents || [],
+        tableDesign: p.tableDesign || []
+      }
     },
     surrealWriteTables: writes,
+    extractionMapping: p.extractionMapping || [],
+    domainLexiconRules: p.domainLexiconRules || [],
+    tableWriteIntents: p.tableWriteIntents || [],
     examples: p.examples?.length ? p.examples : [
       { table: 'document', data: { cacheId: 'cache-123', filename: 'report.pdf', wordCount: 12800, extractionMethod: 'pdf-pdftotext' } },
-      { table: 'chunk', data: { cacheId: 'cache-123', filename: 'report.pdf', chunkIndex: 1, text: '...', charCount: 1400 } }
+      { table: 'chunk', data: { cacheId: 'cache-123', filename: 'report.pdf', chunkIndex: 1, text: '...', charCount: opts.chunkSize || 1400 } }
     ]
   };
 }
@@ -55,12 +67,12 @@ function applyProfile(profile){
   $('prefer-gpu').checked = Boolean(profile.indexOptions?.preferGpu);
   renderTuningLabels();
   setProfileLock(true);
-  $('active-profile-status').textContent = `Using profile: ${profile.name || profile.strategy} (${profile.strategy || 'custom'}). Exit profile to edit manual controls.`;
+  $('active-profile-status').textContent = `Using feature plan: ${profile.name || profile.strategy} (${profile.strategy || 'custom'}). Exit plan to edit manual controls.`;
 }
 function clearActiveProfileUI(){
   activeIndexProfile = null;
   setProfileLock(false);
-  $('active-profile-status').textContent = 'No active profile selected.';
+  $('active-profile-status').textContent = 'No active feature plan selected.';
 }
 function setProgress(v=0){ $('index-progress').style.width = `${Math.max(0, Math.min(100, v))}%`; }
 function relTime(iso=''){ const d=new Date(iso); const s=Math.floor((Date.now()-d.getTime())/1000); if(!iso||Number.isNaN(d.getTime())) return ''; if(s<60) return `${s}s ago`; if(s<3600) return `${Math.floor(s/60)}m ago`; if(s<86400) return `${Math.floor(s/3600)}h ago`; return `${Math.floor(s/86400)}d ago`; }
@@ -162,7 +174,7 @@ $('save-profile-json').onclick = async ()=>{
 
 $('generate-feature-plans').onclick = async ()=>{
   const cacheId = selectedCacheId(); if(!cacheId) return;
-  $('feature-plan-status').textContent = 'Generating feature plans...';
+  $('feature-plan-status').innerHTML = '<span class="spinner"></span>Generating feature plans (can take up to 1–2 minutes)...';
   const goal = $('feature-goal').value.trim();
   const r = await fetch(`/api/index/feature-plans/${cacheId}`, {
     method:'POST', headers:{'Content-Type':'application/json'},
@@ -171,6 +183,7 @@ $('generate-feature-plans').onclick = async ()=>{
   const j = await r.json();
   if (!r.ok || !j.ok) { $('feature-plan-status').textContent = `Feature planning failed: ${j.error||'unknown'}`; return; }
   renderFeaturePlans(j.plans || []);
+  if (j.sampleSummary) $('quick-file-summary').textContent = j.sampleSummary;
   if (!j.plans?.length) {
     $('feature-plan-status').textContent = j.warning || `No plans generated (${j.source}).`;
     return;
@@ -197,12 +210,12 @@ function renderFeaturePlans(plans = []) {
   const el = $('feature-plans');
   featurePlansState = Array.isArray(plans) ? plans : [];
   if (!featurePlansState.length) { el.innerHTML = ''; return; }
-  el.innerHTML = featurePlansState.map((p, idx)=>`<details class="feature-plan" ${idx===0?'open':''}><summary>${(p.tier||'Plan').replace(/</g,'&lt;')} — ${(p.name||'').replace(/</g,'&lt;')}</summary><p class="muted">${String(p.explanation||'').replace(/</g,'&lt;')}</p><p><strong>Index options:</strong> chunk ${p.indexOptions?.chunkSize||1400}, workers ${p.indexOptions?.parallelWorkers||1}, analysis ${p.indexOptions?.analysisEnabled===false?'off':'on'}</p><p><strong>Estimated indexing:</strong> ${p.estimatedTime || 'n/a'}</p><p><strong>Example question:</strong> ${String(p.exampleQuestion||'').replace(/</g,'&lt;')}</p><ul>${(p.tableDesign||[]).map((t)=>`<li>${String(t).replace(/</g,'&lt;')}</li>`).join('')}</ul><div class="row"><button class="use-plan" data-plan-idx="${idx}">Use This Profile</button><button class="view-plan" data-plan-idx="${idx}">See Surreal Format</button></div></details>`).join('');
+  el.innerHTML = featurePlansState.map((p, idx)=>`<details class="feature-plan" ${idx===0?'open':''}><summary>${(p.tier||'Plan').replace(/</g,'&lt;')} — ${(p.name||'').replace(/</g,'&lt;')}</summary><p class="muted">${String(p.explanation||'').replace(/</g,'&lt;')}</p><p><strong>Performance setup:</strong> chunk ${p.indexOptions?.chunkSize||1400}, workers ${p.indexOptions?.parallelWorkers||1}, analysis ${p.indexOptions?.analysisEnabled===false?'off':'on'}</p><p><strong>Estimated indexing:</strong> ${p.estimatedTime || 'n/a'}</p><p><strong>Example question:</strong> ${String(p.exampleQuestion||'').replace(/</g,'&lt;')}</p><p><strong>Extraction mapping:</strong> ${(p.extractionMapping||[]).slice(0,3).map((x)=>String(x).replace(/</g,'&lt;')).join(' • ') || 'n/a'}</p><p><strong>Domain lexicon:</strong> ${(p.domainLexiconRules||[]).slice(0,8).map((x)=>String(x).replace(/</g,'&lt;')).join(', ') || 'n/a'}</p><ul>${(p.tableWriteIntents||p.tableDesign||[]).map((t)=>`<li>${String(t).replace(/</g,'&lt;')}</li>`).join('')}</ul><div class="row"><button class="use-plan" data-plan-idx="${idx}">Use This Feature Plan</button><button class="view-plan" data-plan-idx="${idx}">See Surreal Format</button></div></details>`).join('');
   el.querySelectorAll('.view-plan').forEach((btn)=>btn.onclick=()=>{ const p=featurePlansState[Number(btn.getAttribute('data-plan-idx'))]; showTraceModal('Surreal Format Preview', buildSurrealFormatProfile(p)); });
   el.querySelectorAll('.use-plan').forEach((btn)=>btn.onclick=async()=>{
     const p=featurePlansState[Number(btn.getAttribute('data-plan-idx'))];
     if(!p) return;
-    const profile = { id:`plan-${Date.now()}`, name:p.name||p.tier||'Plan', strategy:p.strategy||'custom', notes:p.explanation||'', tableDesign:p.tableDesign||[], indexOptions:p.indexOptions||currentIndexOptions(), examples:[{table:'entity',data:{type:'example',value:'...'}},{table:'relation',data:{type:'cooccurrence',sourceValue:'A',targetValue:'B'}}] };
+    const profile = { id:`plan-${Date.now()}`, name:p.name||p.tier||'Feature Plan', strategy:p.strategy||'custom', notes:p.explanation||'', tableDesign:p.tableDesign||[], extractionMapping:p.extractionMapping||[], domainLexiconRules:p.domainLexiconRules||[], tableWriteIntents:p.tableWriteIntents||[], indexOptions:p.indexOptions||currentIndexOptions(), examples:[{table:'entity',data:{type:'example',value:'...'}},{table:'relation',data:{type:'cooccurrence',sourceValue:'A',targetValue:'B'}}] };
     applyProfile(profile);
     const cacheId = selectedCacheId();
     if (cacheId) await fetch(`/api/index-profile/${cacheId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ profile, persist:false }) });
@@ -238,7 +251,7 @@ function renderUploadedFilePreview(files = []) {
 
 async function runQuickSummary(cacheId){
   if(!cacheId) return;
-  $('quick-file-summary').textContent = 'Scanning uploaded files and generating summary...';
+  $('quick-file-summary').innerHTML = '<span class="spinner"></span>Scanning uploaded files and generating summary...';
   const r = await fetch(`/api/cache-quick-summary/${cacheId}`, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ openRouterKey: $('or-key').value.trim(), model: $('or-model').value.trim() })

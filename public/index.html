@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Surreal Investigate</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -48,6 +49,7 @@
 
     <section class="card" id="section-index">
       <h2>Index</h2>
+      <p class="guide"><i class="fa-regular fa-lightbulb"></i> <strong>Guidance:</strong> Index setup controls how fast ingestion runs and how much structure gets extracted into SurrealDB tables. Use feature plans to define domain logic, then tune chunk/workers here for performance.</p>
       <div class="row">
         <select id="index-strategy">
           <option value="investigation-default">Investigation default (entities + events + anomalies)</option>
@@ -62,6 +64,7 @@
         <button id="load-existing-index">Load Existing Index</button>
         <button id="index-btn">Create / Refresh Index</button>
       </div>
+      <p class="guide"><i class="fa-regular fa-lightbulb"></i> <strong>Guidance:</strong> Chunk size controls how much text is processed per unit; larger chunks reduce overhead but can blur precision. Parallel workers controls concurrency; increase carefully to speed indexing without overloading the machine.</p>
       <div class="tuning-grid">
         <label>Chunk size <span id="chunk-size-value">1400</span>
           <input id="chunk-size" type="range" min="300" max="8000" step="100" value="1400" />
@@ -70,25 +73,27 @@
           <input id="parallel-workers" type="range" min="1" max="24" step="1" value="1" />
         </label>
       </div>
+      <p class="muted" id="recommend-tip"><i class="fa-regular fa-lightbulb"></i> Tip: Recommend Setup uses safe defaults from your machine profile. You can always re-run it to return to default tuning.</p>
       <div class="row">
         <label><input id="analysis-enabled" type="checkbox" checked /> Run entity/event/anomaly analysis</label>
         <label><input id="prefer-gpu" type="checkbox" /> Prefer GPU (future mode)</label>
-        <button id="recommend-index-settings">Recommend</button>
-        <button id="use-recommended" disabled>Use Recommended</button>
+        <button id="recommend-index-settings">Recommend Setup</button>
+        <button id="use-recommended" disabled>Apply Recommended</button>
       </div>
       <p class="muted" id="quick-file-summary">No file summary yet. Upload files to auto-scan.</p>
       <p class="muted" id="index-recommendation">No recommendation loaded yet.</p>
+      <p class="guide"><i class="fa-regular fa-lightbulb"></i> <strong>Guidance:</strong> Feature plans define domain extraction logic (mapping, lexicon rules, and table write intents). Generating plans may take up to 1–2 minutes depending on model speed.</p>
       <div class="row">
-        <input id="feature-goal" placeholder="What do you want to figure out? (e.g., correlated ship routes)" style="min-width:320px;flex:1" />
+        <input id="feature-goal" placeholder="Describe what you want to know (or leave blank for AI to try)" style="min-width:320px;flex:1" />
         <button id="generate-feature-plans">Generate 3 Feature Plans</button>
       </div>
       <p class="muted" id="feature-plan-status">No feature plans generated yet.</p>
       <div id="feature-plans"></div>
       <div class="card" id="active-profile-card" style="margin-top:10px">
-        <h3>Active Index Profile</h3>
-        <p class="muted" id="active-profile-status">No active profile selected.</p>
+        <h3>Active Feature Plan</h3>
+        <p class="muted" id="active-profile-status">No active feature plan selected.</p>
         <div class="row">
-          <button id="exit-active-profile">Exit Profile</button>
+          <button id="exit-active-profile">Exit Plan</button>
           <button id="view-active-profile-format">View Format</button>
           <button id="edit-active-profile">Edit JSON</button>
         </div>
