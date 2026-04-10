@@ -72,6 +72,15 @@ function showTraceModal(title, detail){
   $('trace-modal').classList.remove('hidden');
 }
 function hideTraceModal(){ $('trace-modal').classList.add('hidden'); }
+function showConfirm(message){
+  return new Promise((resolve)=>{
+    $('confirm-text').textContent = message || 'Are you sure?';
+    $('confirm-modal').classList.remove('hidden');
+    const done = (v)=>{ $('confirm-modal').classList.add('hidden'); $('confirm-ok').onclick=null; $('confirm-cancel').onclick=null; resolve(v); };
+    $('confirm-ok').onclick = ()=>done(true);
+    $('confirm-cancel').onclick = ()=>done(false);
+  });
+}
 
 function renderLiveTrace(){
   const el = $('live-trace');
@@ -201,14 +210,30 @@ function renderFeaturePlans(plans = []) {
 }
 
 function renderUploadedFilePreview(files = []) {
+  const cacheId = selectedCacheId();
   $('file-preview').innerHTML = (files || []).slice(-12).map((f)=>{
     const e = ext(f.originalName || f.name || '');
     const ok = f.supported !== false;
     const sample = String(f.samplePreview || '').trim();
     const btn = sample ? `<button class="sugg-btn view-sample" data-sample="${sample.replace(/"/g,'&quot;')}">View</button>` : '<span class="muted">No text</span>';
-    return `<tr><td>${(f.originalName||f.name||'').replace(/</g,'&lt;')}</td><td>${e||'unknown'}</td><td>${bytes(Number(f.size||0))}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td><td>${btn}</td></tr>`;
+    const trash = f.id ? `<button class="sugg-btn del-file" data-file-id="${String(f.id)}" style="border-color:#7a2e2e;color:#ffb3b3">🗑</button>` : '';
+    return `<tr><td>${(f.originalName||f.name||'').replace(/</g,'&lt;')}</td><td>${e||'unknown'}</td><td>${bytes(Number(f.size||0))}</td><td>${ok?'✅':'⚠️ raw-fallback'}</td><td>${btn} ${trash}</td></tr>`;
   }).join('');
   document.querySelectorAll('.view-sample').forEach((btn)=>{ btn.onclick=()=>showTraceModal('Sample text preview (first 200 chars)', btn.getAttribute('data-sample') || ''); });
+  document.querySelectorAll('.del-file').forEach((btn)=>{
+    btn.onclick = async ()=>{
+      if (!cacheId) return;
+      const fileId = btn.getAttribute('data-file-id');
+      const ok = await showConfirm('Remove this file from the cache? This deletes the uploaded file and requires re-indexing.');
+      if (!ok) return;
+      const r = await fetch(`/api/cache-file/${cacheId}/${fileId}`, { method:'DELETE' });
+      const j = await r.json();
+      if (!r.ok || !j.ok) { $('upload-status').textContent = `Delete failed: ${j.error||'unknown'}`; return; }
+      $('upload-status').textContent = 'File removed.';
+      await fetchCaches();
+      await runQuickSummary(cacheId);
+    };
+  });
 }
 
 async function runQuickSummary(cacheId){
@@ -248,6 +273,7 @@ async function loadChatMessages(){
 $('save-or').onclick=()=>{ localStorage.setItem('openrouter.key',$('or-key').value.trim()); localStorage.setItem('openrouter.model',$('or-model').value.trim()); $('or-dot').className='dot green'; $('or-status').textContent='Saved locally'; };
 $('trace-modal-close').onclick = hideTraceModal;
 $('trace-modal').onclick = (e)=>{ if(e.target.id==='trace-modal') hideTraceModal(); };
+$('confirm-modal').onclick = (e)=>{ if(e.target.id==='confirm-modal') $('confirm-modal').classList.add('hidden'); };
 $('ping-or').onclick=async()=>{ $('or-status').textContent='Pinging...'; const r=await fetch('/api/openrouter/ping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:$('or-key').value.trim(),model:$('or-model').value.trim()})}); const j=await r.json(); if(r.ok&&j.ok){ $('or-dot').className='dot green'; $('or-status').textContent='OpenRouter reachable'; } else { $('or-dot').className='dot red'; $('or-status').textContent=`Ping failed: ${j.error||'unknown'}`; }};
 
 async function createNewChatForCache(cacheId, title='New session'){ const r = await fetch(`/api/chats/${cacheId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ title }) }); return r.json(); }

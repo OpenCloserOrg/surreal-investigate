@@ -326,6 +326,28 @@ app.post('/api/caches', (req, res) => {
   return res.json({ ok: true, cache });
 });
 
+app.delete('/api/cache-file/:cacheId/:fileId', async (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const fileId = String(req.params.fileId || '').trim();
+  const data = readCaches();
+  const cache = findCache(data, cacheId);
+  if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
+  const files = Array.isArray(cache.files) ? cache.files : [];
+  const target = files.find((f) => String(f.id) === fileId);
+  if (!target) return res.status(404).json({ ok: false, error: 'file not found' });
+
+  try {
+    if (target.absPath && fs.existsSync(target.absPath)) fs.unlinkSync(target.absPath);
+  } catch {}
+
+  cache.files = files.filter((f) => String(f.id) !== fileId);
+  cache.updatedAt = new Date().toISOString();
+  cache.status = cache.files.length ? 'files_uploaded' : 'new';
+  cache.readyForQuestions = false;
+  writeCaches(data);
+  return res.json({ ok: true, cache, removedFileId: fileId });
+});
+
 app.post('/api/upload', upload.array('files', 400), async (req, res) => {
   logServer('upload:start', { cacheId: req.body?.cacheId, fileCount: (req.files || []).length });
   const cacheId = String(req.body?.cacheId || '').trim();
