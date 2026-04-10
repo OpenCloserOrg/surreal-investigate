@@ -391,6 +391,9 @@ app.post('/api/index/:cacheId', async (req, res) => {
           log(`Skipped empty extraction: ${file.originalName} (method: ${extracted.method || 'unknown'})`);
           continue;
         }
+        if (summary.wordCount < 25 && String(file.originalName || '').toLowerCase().endsWith('.pdf')) {
+          log(`Warning: very low PDF text extraction for ${file.originalName} (${summary.wordCount} words). This file may be image-only/scanned and require OCR.`);
+        }
         await db.query(
           'INSERT INTO document $data;',
           {
@@ -400,6 +403,7 @@ app.post('/api/index/:cacheId', async (req, res) => {
               filename: file.originalName,
               size: file.size,
               mimeType: file.mimeType,
+              extractionMethod: extracted.method || 'unknown',
               extractedAt: new Date().toISOString(),
               ...summary
             }
