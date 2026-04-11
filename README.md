@@ -6,7 +6,7 @@
 
 Local-first **SurrealDB + Node.js** data intelligence app for large file collections.
 
-Use it to turn mixed documents/spreadsheets/logs into durable structured memory that AI can query for patterns, correlations, and probability-style insights.
+Use it to turn mixed documents/spreadsheets/logs into durable structured data that AI can query for patterns, correlations, and probability-style insights.
 
 Current AI provider path: **OpenRouter** (single endpoint, multi-model routing for easy model comparisons). More providers (OpenAI/Anthropic/Together/local) are planned.
 
@@ -54,27 +54,43 @@ When fully running, you can:
   - `indexes/<cache-id>/snapshots/<timestamp>.json`
 - Sample fixture for flow testing: `fixtures/sample-case-500w.txt`
 
-## Current working investigation strategy (default)
+## Current working indexing + data model strategy (default)
 
-This project now uses an **investigation-first indexing strategy** by default:
+This project now uses an **indexing-first strategy for operational datasets** (shopper, shipping, and supply-chain heavy data):
 
-1. Extract text from each file
-2. Store document metadata
+1. Extract text from each file (even if source is semi-structured or messy)
+2. Store document metadata (source, timestamps, file lineage, confidence)
 3. Chunk document text for retrieval
-4. Derive structured investigation signals per chunk:
-   - **entities** (people, orgs, emails)
-   - **events** (e.g., money/transfer-style amounts)
-   - **activities** (actions people took: met/called/sent/requested/etc.)
-   - **intent signals** (request, urgency, concealment, authorization-style language)
-   - **location/time context** (captured where detectable from text patterns)
-   - **anomalies** (concealment, threshold splitting, integrity mismatch indicators)
-   - **relations** (co-occurrence links between entities)
+4. Derive structured domain signals per chunk and map them into Surreal tables:
+   - **shopper/customer signals** (customer IDs, loyalty IDs, segments, regions)
+   - **order + fulfillment signals** (order numbers, SKUs, quantities, status transitions)
+   - **shipping + logistics signals** (carrier, tracking number, ship node, route, ETA, delivery exceptions)
+   - **supply chain signals** (supplier, PO, warehouse, inventory movement, lead-time changes)
+   - **time/location context** (where + when events happened)
+   - **anomaly signals** (delay spikes, mismatch indicators, unusual routing, split shipments)
+   - **relationships** (cross-table links such as shopper→order, order→shipment, shipment→carrier, SKU→supplier)
 5. At query time, combine:
-   - chunk retrieval
-   - structured table retrieval
+   - lexical/fuzzy retrieval over chunks and indexed fields
+   - structured table retrieval over explicit relationships
    - optional AI synthesis grounded in Surreal evidence
 
-This is the current baseline strategy and will be iterated over time (better extraction quality, richer graph logic, stronger anomaly detection).
+This strategy is designed to **structure unstructured data using a clear indexing and data modeling plan**, then support both deterministic lookups and fuzzy search workflows when paired with AI.
+
+### Example relationship patterns (shopper + shipping + supply chain)
+
+- `shopper:123 -> placed -> order:987`
+- `order:987 -> contains -> sku:ABC-42`
+- `order:987 -> fulfilled_by -> warehouse:NL-AMS-01`
+- `order:987 -> shipped_as -> shipment:TRK-4451`
+- `shipment:TRK-4451 -> carried_by -> carrier:DHL`
+- `sku:ABC-42 -> supplied_by -> supplier:NorthCo`
+- `supplier:NorthCo -> delayed -> po:55671`
+- `po:55671 -> impacts -> order:987`
+
+These links make it easier to ask questions like:
+- "Which shoppers were impacted by supplier delays last week?"
+- "Show orders with delivery exceptions and repeated ETA drift."
+- "Find likely duplicate/misspelled carrier names (fuzzy matching) before analytics."
 
 ---
 
