@@ -92,6 +92,34 @@ These links make it easier to ask questions like:
 - "Show orders with delivery exceptions and repeated ETA drift."
 - "Find likely duplicate/misspelled carrier names (fuzzy matching) before analytics."
 
+### Example relationship patterns (CO2 + agriculture research)
+
+You can run the same flow on scientific and policy-heavy document sets (papers, datasets, reports, policy memos):
+
+- `region:BR-MT -> crop -> soy`
+- `study:paper-042 -> measures -> co2_flux`
+- `farm-practice:no-till -> affects -> soil_carbon`
+- `weather:event-889 -> impacts -> yield:corn`
+- `yield:corn -> linked_to -> market:corn-futures`
+- `policy:carbon-credit-v2 -> changes -> incentive:adoption`
+
+This enables cross-domain questions such as:
+- "Where do CO2 trends and agriculture yield volatility move together?"
+- "Which practices appear to reduce emissions while preserving yield?"
+- "Do any recurring signals plausibly improve forecast confidence for market participants?"
+
+### Why data modeling matters in SurrealDB
+
+Surreal works best when you keep both:
+1. **raw evidence** (`document`, `chunk`) for traceability
+2. **modeled structure** (`entity`, `event`, `relation`, domain tables) for fast, explainable queries
+
+That dual structure gives you:
+- deterministic filtering (IDs, ranges, timestamps, status values)
+- graph-style traversal (who/what affects what)
+- fuzzy retrieval over noisy text + variant labels
+- AI synthesis grounded in records you can inspect and export
+
 ---
 
 ## Prerequisites
@@ -164,16 +192,82 @@ AI_MODEL=qwen/qwen3-32b
 
 ---
 
-## E2E test flow (manual)
+## Full UI flow (from 10 uploaded files to answers + exports)
 
-1. Create cache (e.g. `harbor-case`)
-2. Click **Load Sample File**
-3. Click **Create / Refresh Index**
-4. Confirm UI shows `Ready for questions ✅`
-5. Ask in **Surreal only** mode:
-   - `who moved money and through which entities?`
-6. (Optional) set OpenRouter key/model and click **Ping**
-7. Switch to **Surreal + AI** mode and ask same question.
+1. **Start system + app**
+   - Start SurrealDB
+   - Run `npm start` and open `http://localhost:3000`
+
+2. **Create a cache (workspace for one dataset)**
+   - Example cache: `co2-agri-q2`
+   - Think of cache as your project folder inside the app (files + schema + chats + index artifacts)
+
+3. **Select AI model early (recommended)**
+   - In Settings, set OpenRouter key + model (for example: `qwen/qwen3-32b`)
+   - Click **Ping** to validate connectivity
+   - Why early: the same model can assist quick-summary, strategy planning, and AI query mode consistently
+
+4. **Upload files (example: 10 files)**
+   - Mix of `.pdf`, `.csv`, `.xlsx`, `.md`, `.txt`, etc.
+   - You can also load fixture files for test flow
+   - App extracts text and keeps file provenance in cache metadata
+
+5. **Generate quick summary (recommended)**
+   - Run quick summary to detect likely dataset recipe/context
+   - This helps pre-bias feature-plan generation toward the right domain assumptions
+
+6. **Generate 3 Data Model + Indexing Strategy Plans**
+   - **Main topic focus**
+     - Fastest path to topical orientation
+     - Tables are lighter (document/chunk/keyword focus)
+     - Best when you need quick signal discovery
+   - **Comprehensive**
+     - Balanced default for most real work
+     - Adds richer structure (`entity`, `event`, `relation`, `anomaly`)
+     - Good tradeoff of speed vs depth
+   - **All-inclusive**
+     - Highest-coverage graph extraction
+     - Adds activity/intent/cluster-style layers
+     - Best for dense investigations and complex correlation work
+
+7. **Tune index performance for your machine ("person computer")**
+   - Set **Chunk size** (larger chunks = less overhead, lower precision granularity)
+   - Set **Parallel workers** (more workers = faster ingest, higher CPU/RAM pressure)
+   - Use index recommendation guidance to scale safely by CPU cores + available memory
+   - For very large corpora, run in batches per cache and keep workers near recommended values to avoid thrash
+
+8. **Run Create / Refresh Index**
+   - Pipeline writes raw + structured records into SurrealDB
+   - Monitor progress using index progress endpoint / UI ETA
+   - Wait for `Ready for questions ✅`
+
+9. **Inspect schema + query pathing**
+   - Open schema viewer to confirm extracted table/field shape
+   - Optional: use SurrealQL conversion panel for NL→SurrealQL drafting
+
+10. **Query without AI (Surreal only)**
+   - Best for deterministic, auditable retrieval with zero LLM cost
+   - Example queries:
+     - "show shipments with >2 ETA changes in the last 14 days"
+     - "list suppliers with lead-time increase >20% month-over-month"
+     - "find records where carrier looks duplicated by spelling variation"
+
+11. **Query with AI (Surreal + AI)**
+   - Surreal retrieves evidence, AI synthesizes and explains patterns
+   - Example (CO2/agriculture):
+     - "There is a lot of CO2 and agriculture data here. Is there anything that could improve predictability accuracy for market participants doing speculation?"
+   - Example (different domain: healthcare operations):
+     - "Across these hospital staffing, admissions, and supply logs, which combined signals might improve short-horizon demand forecasting risk?"
+
+12. **Review downloadable outputs and what they are for**
+   - **Index manifest** (`/api/index-manifest/:cacheId`)
+     - Snapshot of index run metadata/config and reproducibility context
+   - **Indexed data export** (`/api/index-data-export/:cacheId`)
+     - Extracted structured tables for external analysis/audit pipelines
+   - **OpenClaw skill/config export** (`/api/openclaw-skill/:cacheId`)
+     - Operator-ready instructions/context to automate or continue analysis in agent workflows
+
+This flow is assisted end-to-end by AI + heuristics: planning, extraction strategy, retrieval mode selection, query conversion, and synthesis are all guided while still preserving auditable Surreal evidence.
 
 ---
 
