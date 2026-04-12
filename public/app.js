@@ -572,18 +572,35 @@ $('download-index-data').onclick = async ()=>{
 $('configure-openclaw').onclick = async ()=>{
   const cacheId = selectedCacheId();
   if (!cacheId) return notifyBlocked('ask');
-  $('query-status').textContent = 'Preparing OpenCLAW configuration package...';
-  const r = await fetch(`/api/openclaw-skill/${cacheId}`);
+  $('query-status').textContent = 'Preparing OpenCLAW config bundle...';
+
+  const r = await fetch(`/api/openclaw-config/${cacheId}`);
   const j = await r.json();
   if (!r.ok || !j.ok) { $('query-status').textContent = `OpenCLAW config failed: ${j.error||'unknown'}`; return; }
-  const blob = new Blob([j.generatedGuide || JSON.stringify(j, null, 2)], { type: 'text/markdown' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${cacheId}-openclaw-setup.md`;
-  a.click();
-  URL.revokeObjectURL(url);
-  $('query-status').textContent = 'OpenCLAW setup guide downloaded.';
+
+  const files = [
+    { name: `${cacheId}-openclaw-config.json`, content: JSON.stringify(j.machineConfig || {}, null, 2), type: 'application/json' },
+    { name: `${cacheId}-openclaw.json.patch`, content: JSON.stringify(j.openclawJsonPatch || {}, null, 2), type: 'application/json' },
+    { name: `${cacheId}-.env.fragment`, content: String(j.envFragment || ''), type: 'text/plain' },
+    { name: `${cacheId}-RUNBOOK.md`, content: String(j.runbook || ''), type: 'text/markdown' }
+  ];
+
+  for (const f of files) {
+    const blob = new Blob([f.content], { type: f.type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = f.name;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const vr = await fetch(`/api/openclaw-validate/${cacheId}`);
+  const vj = await vr.json();
+  const failed = (vj.checks || []).filter((c)=>!c.ok && !c.optional);
+  $('query-status').textContent = failed.length
+    ? `OpenCLAW bundle downloaded. Validation: ${failed.length} required checks failed.`
+    : 'OpenCLAW bundle downloaded. Validation passed for required checks.';
 };
 $('redo-index-flow').onclick = ()=> scrollToSection('section-index');
 

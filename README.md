@@ -294,6 +294,8 @@ This flow is assisted end-to-end by AI + heuristics: planning, extraction strate
 - `GET /api/schema/:cacheId`
 - `POST /api/convert-surrealql/:cacheId`
 - `GET /api/openclaw-skill/:cacheId`
+- `GET /api/openclaw-config/:cacheId`
+- `GET /api/openclaw-validate/:cacheId`
 - `GET /api/index-profile/:cacheId`
 - `POST /api/index-profile/:cacheId`
 - `DELETE /api/index-profile/:cacheId`

@@ -369,12 +369,7 @@ If current schema cannot answer precisely, set needsRemodel=true and provide con
   }
 });
 
-app.get('/api/openclaw-skill/:cacheId', async (req, res) => {
-  const cacheId = String(req.params.cacheId || '').trim();
-  const data = readCaches();
-  const cache = findCache(data, cacheId);
-  if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
-
+function buildOpenClawConfigBundle(cacheId, cache) {
   const appBase = `http://localhost:${PORT}`;
   const surrealRuntime = {
     url: surrealConfig.url,
@@ -384,13 +379,166 @@ app.get('/api/openclaw-skill/:cacheId', async (req, res) => {
     likelyDataPath: path.join(ROOT, 'data', 'surreal.db')
   };
 
-  const skillText = `# OpenCLAW Surreal Investigate quick-setup\n\nCache: ${cacheId}\nApp: ${appBase}\n\nSurreal runtime:\n- URL: ${surrealRuntime.url}\n- NS/DB: ${surrealRuntime.namespace}/${surrealRuntime.database}\n- CWD: ${surrealRuntime.cwd}\n- Likely KV path: ${surrealRuntime.likelyDataPath}\n\nWorkflow:\n1) POST /api/caches\n2) POST /api/upload\n3) POST /api/cache-quick-summary/:cacheId\n4) POST /api/index/feature-plans/:cacheId\n5) POST /api/index/:cacheId\n6) POST /api/query/:cacheId\n\nUse /api/schema/:cacheId and /api/convert-surrealql/:cacheId for schema-aware query conversion.\nIf extraction is weak, run /api/index-diagnose/:cacheId and re-index with custom strategy notes.`;
+  const indexProfile = cache?.activeIndexProfile || {
+    name: 'local-dev',
+    chunkSize: 1400,
+    parallelWorkers: 1,
+    analysisEnabled: true,
+    preferGpu: false
+  };
+
+  const machineConfig = {
+    schema: 'surreal-investigate.openclaw-config.v1',
+    cacheId,
+    appBase,
+    workspacePath: ROOT,
+    skillPath: path.join(ROOT, 'openclaw', 'SKILL.md'),
+    surrealRuntime,
+    envRequirements: ['SURREAL_URL', 'SURREAL_NS', 'SURREAL_DB', 'SURREAL_USER', 'SURREAL_PASS'],
+    optionalEnv: ['AI_PROVIDER_URL', 'AI_API_KEY', 'AI_MODEL'],
+    toolPermissions: {
+      required: ['web_fetch', 'exec', 'read', 'write'],
+      optional: ['web_search']
+    },
+    defaults: {
+      queryMode: 'surreal',
+      indexProfile
+    },
+    healthChecks: [
+      'GET /api/health',
+      'GET /api/surreal/health',
+      `GET /api/schema/${cacheId}`,
+      `POST /api/query/${cacheId}`
+    ],
+    recommendedCommands: [
+      'npm install',
+      'npm start',
+      'openclaw status',
+      'openclaw gateway probe'
+    ]
+  };
+
+  const openclawJsonPatch = {
+    tools: {
+      allow: ['read', 'write', 'exec', 'web_fetch', 'web_search'],
+      web: { search: { enabled: true }, fetch: { enabled: true } }
+    },
+    agents: {
+      defaults: {
+        workspace: ROOT
+      }
+    }
+  };
+
+  const envFragment = `# Surreal Investigate runtime\nSURREAL_URL=${surrealRuntime.url}\nSURREAL_NS=${surrealRuntime.namespace}\nSURREAL_DB=${surrealRuntime.database}\nSURREAL_USER=${surrealConfig.user}\nSURREAL_PASS=${surrealConfig.pass}\n\n# Optional AI mode\nAI_PROVIDER_URL=${AI_PROVIDER_URL || 'https://openrouter.ai/api/v1/chat/completions'}\nAI_MODEL=${AI_MODEL || 'qwen/qwen3-32b'}\nAI_API_KEY=\n`;
+
+  const runbook = `# OpenClaw config runbook (${cacheId})\n\n1. Start Surreal + app\n   - npm install\n   - npm start\n\n2. Apply openclaw.json patch\n   - merge ./openclaw.json.patch into ~/.openclaw/openclaw.json\n\n3. Apply env fragment\n   - append ./.env.fragment to your .env\n\n4. Validate\n   - GET /api/openclaw-validate/${cacheId}\n\n5. Operate\n   - use openclaw/SKILL.md + references for API-first workflows\n`;
+
+  return { machineConfig, openclawJsonPatch, envFragment, runbook, surrealRuntime };
+}
+
+app.get('/api/openclaw-config/:cacheId', async (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const data = readCaches();
+  const cache = findCache(data, cacheId);
+  if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
+
+  let surrealVersion = null;
+  try {
+    surrealVersion = await withSurreal(async (db) => {
+      const q = await db.query('RETURN version();');
+      const row = Array.isArray(q?.[0]) ? q[0]?.[0] : (q?.[0]?.result?.[0]);
+      return row || null;
+    });
+  } catch {}
+
+  const bundle = buildOpenClawConfigBundle(cacheId, cache);
+  return res.json({
+    ok: true,
+    cacheId,
+    surrealVersion,
+    compatibility: {
+      profile: surrealVersion && String(surrealVersion).startsWith('3') ? 'surreal-3x' : 'surreal-2x-or-unknown',
+      note: 'Use conservative SurrealQL syntax when version is unknown.'
+    },
+    ...bundle
+  });
+});
+
+app.get('/api/openclaw-validate/:cacheId', async (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const data = readCaches();
+  const cache = findCache(data, cacheId);
+
+  const checks = [];
+  checks.push({ name: 'cache_exists', ok: Boolean(cache), detail: cache ? 'cache found' : 'cache not found' });
+
+  try {
+    await withTimeout(withSurreal(async (db) => db.query('RETURN 1;')), 5000, 'surreal health check');
+    checks.push({ name: 'surreal_reachable', ok: true, detail: 'surreal reachable' });
+  } catch (error) {
+    checks.push({ name: 'surreal_reachable', ok: false, detail: error.message });
+  }
+
+  if (cache) {
+    try {
+      const schema = await withSurreal(async (db) => {
+        const tables = ['document','chunk','entity','event','activity','intent','relation','anomaly'];
+        const out = {};
+        for (const t of tables) {
+          const q = await db.query(`SELECT * FROM ${t} WHERE cacheId = $cacheId LIMIT 1;`, { cacheId });
+          const rows = Array.isArray(q?.[0]) ? q[0] : (q?.[0]?.result || []);
+          out[t] = rows[0] ? Object.keys(rows[0]) : [];
+        }
+        return out;
+      });
+      const hasSchema = Object.values(schema).some((fields) => Array.isArray(fields) && fields.length > 0);
+      checks.push({ name: 'schema_present', ok: hasSchema, detail: hasSchema ? 'schema detected' : 'schema empty' });
+    } catch (error) {
+      checks.push({ name: 'schema_present', ok: false, detail: error.message });
+    }
+
+    try {
+      await withSurreal(async (db) => db.query('SELECT * FROM chunk WHERE cacheId = $cacheId LIMIT 1;', { cacheId }));
+      checks.push({ name: 'sample_query', ok: true, detail: 'query executed' });
+    } catch (error) {
+      checks.push({ name: 'sample_query', ok: false, detail: error.message });
+    }
+  }
+
+  if (AI_PROVIDER_URL && AI_API_KEY && AI_MODEL) {
+    try {
+      const pingResp = await fetch(AI_PROVIDER_URL, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${AI_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: AI_MODEL, messages: [{ role: 'user', content: 'ping' }], max_tokens: 8 })
+      });
+      checks.push({ name: 'ai_ping', ok: pingResp.ok, optional: true, detail: pingResp.ok ? 'ai provider reachable' : `HTTP ${pingResp.status}` });
+    } catch (error) {
+      checks.push({ name: 'ai_ping', ok: false, optional: true, detail: error.message || 'ai ping failed' });
+    }
+  } else {
+    checks.push({ name: 'ai_ping', ok: false, optional: true, detail: 'AI env vars not set' });
+  }
+
+  const requiredFailed = checks.filter((c) => !c.optional && !c.ok);
+  return res.json({ ok: requiredFailed.length === 0, cacheId, checks });
+});
+
+app.get('/api/openclaw-skill/:cacheId', async (req, res) => {
+  const cacheId = String(req.params.cacheId || '').trim();
+  const data = readCaches();
+  const cache = findCache(data, cacheId);
+  if (!cache) return res.status(404).json({ ok: false, error: 'cache not found' });
+
+  const bundle = buildOpenClawConfigBundle(cacheId, cache);
+  const skillText = `# OpenCLAW Surreal Investigate quick-setup\n\nCache: ${cacheId}\nApp: ${bundle.machineConfig.appBase}\n\nSurreal runtime:\n- URL: ${bundle.surrealRuntime.url}\n- NS/DB: ${bundle.surrealRuntime.namespace}/${bundle.surrealRuntime.database}\n- CWD: ${bundle.surrealRuntime.cwd}\n- Likely KV path: ${bundle.surrealRuntime.likelyDataPath}\n\nWorkflow:\n1) POST /api/caches\n2) POST /api/upload\n3) POST /api/cache-quick-summary/:cacheId\n4) POST /api/index/feature-plans/:cacheId\n5) POST /api/index/:cacheId\n6) POST /api/query/:cacheId\n\nUse /api/schema/:cacheId and /api/convert-surrealql/:cacheId for schema-aware query conversion.\nIf extraction is weak, run /api/index-diagnose/:cacheId and re-index with custom strategy notes.\n\nMachine config bundle:\n- GET /api/openclaw-config/:cacheId\n- GET /api/openclaw-validate/:cacheId`;
 
   return res.json({
     ok: true,
     cacheId,
-    appBase,
-    surrealRuntime,
+    appBase: bundle.machineConfig.appBase,
+    surrealRuntime: bundle.surrealRuntime,
     skillPath: 'openclaw/SKILL.md',
     references: [
       'openclaw/references/api-cookbook.md',
